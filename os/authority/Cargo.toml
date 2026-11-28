@@ -1,0 +1,18 @@
+[package]
+name = "allternit-os-authority"
+description = "AllternitOS authority service (binary `authority`): serves the check call from the allternit-authority crate's policy table."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "authority"
+path = "src/main.rs"
+
+[dependencies]
+# Path dependency on the crate in the platform root workspace (this workspace is standalone).
+# Default features (std + serde): framing and JSON types. Pure Rust, so it builds for
+# x86_64-unknown-linux-musl like the rest of os/.
+allternit-authority = { path = "../../domains/kernel/authority" }
+serde_json = "1"

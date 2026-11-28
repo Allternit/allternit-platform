@@ -14,9 +14,18 @@ standalone Cargo workspace (PLAN.md decision 10); the platform root
   `shell-tool-call ok action=<a> decision=<d>` and `model tok/s=<n>`, exits 0.
 - `model/`: `build-llama.sh` (static llama-server at the tag in `LLAMA`), `MODEL` (the baked
   GGUF: URL, size, sha256).
-- `authority-stub/` (binary `authority`): a **stub**. It answers a JSON `check`
-  on `/run/allternit/authority.sock` with a fixed rule. Plan step 4's
-  `allternit-authority` crate replaces it.
+- `authority/` (crate `allternit-os-authority`, binary `authority`): the authority service. Decisions
+  come from the `allternit-authority` crate (`domains/kernel/authority`, path dependency
+  `../../domains/kernel/authority`, default features; pure Rust, so it builds for musl). It serves
+  `check` only, on `/run/allternit/authority.sock`, in two protocols told apart by the first byte:
+  init's JSON line check (`{"op":"check","class":...}`, answers `allow`/`deny`; an `ask` row is deny)
+  and the contract section 2.0 framed envelope (answers `ALLOW`/`ASK`/`DENY`). Class comes from
+  `extensions["x-os-v1"].action_class` (the older `os.v1` key is still read); a missing
+  `autonomy_level` means `ask_first`. Human-only classes are always DENY (no token store yet);
+  `app_install` is ASK at every level (G0). Every other call fails closed with `kernel_unavailable`.
+  Not yet here: approval tokens, receipts, `SO_PEERCRED` caller binding. This replaced
+  `authority-stub/` (PR #3275); the directory was renamed because nothing outside `os/Cargo.toml`
+  referenced it (init and mkimage use the binary name `authority`, unchanged).
 
 ## Boot sequence
 

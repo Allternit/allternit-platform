@@ -2,7 +2,7 @@
 # Not a member of the platform root workspace; the root Cargo.toml excludes `os`.
 [workspace]
 resolver = "2"
-members = ["init", "authority-stub", "shell"]
+members = ["init", "authority", "shell"]
 
 [workspace.package]
 version = "0.1.0"

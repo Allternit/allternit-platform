@@ -28,8 +28,8 @@ checks they agree, and `tests/conformance.rs` decodes the os/v1 conformance exam
   `approval_token_spends`) is embedded and called in-process with `Authority::call`. The gate sits
   inside `execute_tool_internal` and `dispatch_call`, not the HTTP layer.
 - **PID 1 (`os/`):** the kernel serves the same JSON over a 0600 Unix socket using `framing`. The
-  caller kind comes from `SO_PEERCRED`, never from the message. This crate replaces the Stage 2
-  `os/authority-stub` (PR #3275).
+  caller kind comes from `SO_PEERCRED`, never from the message. The `os/authority` service (formerly the Stage 2
+  `os/authority-stub`, PR #3275) serves `check` from this crate's policy table.
 - **Kernel IPC (Stage 3):** the same JSON payload as the IPC message body.
 
 ## Verify
