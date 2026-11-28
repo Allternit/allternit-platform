@@ -9,9 +9,16 @@
 //! | `server_tool_routes::execute_server_tool` | Org server tools, which take precedence over native tools of the same name |
 //! | `mcp_dispatcher::McpDispatcher::dispatch_call` | Tools on attached MCP servers (MCP `tools/call`, commerce fulfilment) |
 //! | `computer_v2::execute_v2` | Structured computer members (`read_ui`, `act`, `run_batch`, `use_credential`, ...) |
+//! | `mcp_agents::call_tool` | The read-only agents tools on the MCP server (`list_agents`, `get_run`, ...) |
+//! | `mcp_server_routes::call_aai_tool` | The agent-interface MCP tools (`agent_send`, `thread_events`, ...) |
+//! | `mcp_server_routes::handle_builtin_dotted_tool` | The `inference.*` built-ins (`time.now` goes on to the native check) |
 //!
 //! Each tool call gets exactly one `check`: a server tool is checked in its own path and the
-//! native check runs only when no server tool matched.
+//! native check runs only when no server tool matched; MCP `tools/call` sends a name down exactly
+//! one of the paths above.
+//!
+//! **Scope.** The receipt chain is per principal and [`super::kernel_scope`] (organization, else
+//! tenant, else `default`), the same value the kernel routes list.
 //!
 //! **Steps.** Classify the call into an action class (section 4.1) with the table below, apply the
 //! autonomy level (`policy::class_rule_in`), and for an `ask` or human-only class require an
@@ -28,7 +35,10 @@
 //! | `enforce` (the target) | yes | yes: ask and human-only calls without a redeemed token are refused and an approval request is created |
 //!
 //! In shadow mode a kernel failure (no signing key, store unreachable) is logged and the call
-//! runs; in enforce mode it is a denial (`kernel_unavailable`, fail closed).
+//! runs; in enforce mode it is a denial (`kernel_unavailable`, fail closed). Shadow mode logs a
+//! warning once per process for each kind of failure (missing signing key, anything else) and
+//! counts the later ones at debug level, so a Desktop that has not handed over the key does not
+//! log on every tool call.
 //!
 //! **Autonomy.** No onboarding consent receipt exists yet (CONTRACT.md 4.4), so the level is
 //! `ask_first` for every account.
@@ -38,6 +48,7 @@
 //! kernel denial always wins.
 
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 use allternit_authority::policy::{class_rule_in, Condition, Rule};
@@ -51,7 +62,7 @@ use serde::Serialize;
 use serde_json::{json, Map, Value};
 
 use super::approvals::{SqlAuthority, REQUEST_SCHEMA_ID};
-use super::audit::{append, ReceiptInput, DEFAULT_TENANT};
+use super::audit::{append, ReceiptInput};
 use super::tokens;
 use crate::db::DbHandle;
 
@@ -110,6 +121,10 @@ pub enum Source {
     Mcp,
     /// A structured computer member (`computer_v2`).
     Computer,
+    /// The agents and agent-interface MCP tools (`list_agents`, `agent_send`, ...).
+    AgentInterface,
+    /// The MCP server's `inference.*` built-ins.
+    Builtin,
 }
 
 impl Source {
@@ -119,6 +134,8 @@ impl Source {
             Source::ServerTool => "server_tool",
             Source::Mcp => "mcp",
             Source::Computer => "computer_v2",
+            Source::AgentInterface => "agent_interface",
+            Source::Builtin => "builtin",
         }
     }
 }
@@ -130,8 +147,8 @@ pub struct CheckCtx {
     pub db: DbHandle,
     /// The authenticated account: owner of any approval request and of the receipt chain.
     pub user_id: String,
-    /// Chain scope with `user_id` (`default` when none).
-    pub tenant: Option<String>,
+    /// Chain scope with `user_id`: always [`super::kernel_scope`]'s value.
+    pub tenant: String,
     pub caller_kind: CallerKind,
     /// The run the call belongs to, when the caller knows it.
     pub run_id: Option<String>,
@@ -144,18 +161,24 @@ pub struct CheckCtx {
 }
 
 impl CheckCtx {
-    /// A run's tool call for `user_id`.
-    pub fn new(db: DbHandle, user_id: &str, tenant: Option<&str>) -> Self {
+    /// A run's tool call for `user_id`. `org_or_tenant` is the caller's organization-or-tenant id
+    /// ([`super::org_or_tenant`]); the chain scope comes from [`super::scope_of`].
+    pub fn new(db: DbHandle, user_id: &str, org_or_tenant: Option<&str>) -> Self {
         Self {
             db,
             user_id: user_id.to_string(),
-            tenant: tenant.filter(|t| !t.is_empty()).map(str::to_string),
+            tenant: super::scope_of(org_or_tenant),
             caller_kind: CallerKind::Run,
             run_id: None,
             approval_token: None,
             class_override: None,
             mode: None,
         }
+    }
+
+    /// A run's tool call for an authenticated user, scoped by [`super::kernel_scope`].
+    pub fn for_user(db: DbHandle, user: &crate::auth::AuthUser) -> Self {
+        Self::new(db, &user.user_id, super::org_or_tenant(user))
     }
 
     pub fn with_run_id(mut self, run_id: Option<String>) -> Self {
@@ -278,6 +301,46 @@ fn computer_class(member: &str, risk: Option<&str>) -> Classified {
     Classified::known(class, "computer_contract")
 }
 
+/// The agents and agent-interface MCP tools. `agent_send` reaches one of the caller's own bots
+/// (`run_control`); a send to a bot the caller does not own would leave the user's own agents, so
+/// it is `client_message` (human-only). The facade refuses such a send anyway; this keeps the
+/// class right if that ever changes.
+fn agent_interface_class(ctx: &CheckCtx, action: &Action) -> Classified {
+    use ActionClass::*;
+    let class = match action.tool.as_str() {
+        // Read-only agents tools (`mcp_agents`) and agent-interface reads. `approval_respond`
+        // never resolves anything over MCP (always HUMAN_REQUIRED), so it only reads.
+        "list_agents" | "get_agent" | "list_runs" | "get_run" | "get_run_result" | "render_run_status" | "agents_list"
+        | "thread_events" | "approvals_list" | "approval_respond" => Read,
+        "agent_send" => {
+            if owns_bot(ctx, action.args.get("bot_id").and_then(Value::as_str)) {
+                RunControl
+            } else {
+                ClientMessage
+            }
+        }
+        _ => return Classified::unknown(),
+    };
+    Classified::known(class, "agent_interface_table")
+}
+
+/// The bot is one of `ctx.user_id`'s agents. A store error counts as not owned (stricter class).
+fn owns_bot(ctx: &CheckCtx, bot_id: Option<&str>) -> bool {
+    let Some(bot_id) = bot_id.filter(|b| !b.is_empty()) else { return false };
+    ctx.db
+        .connect()
+        .ok()
+        .and_then(|c| {
+            c.query_row(
+                "SELECT COUNT(*) FROM agents WHERE id = ?1 AND user_id = ?2",
+                rusqlite::params![bot_id, ctx.user_id],
+                |r| r.get::<_, i64>(0),
+            )
+            .ok()
+        })
+        .is_some_and(|n| n > 0)
+}
+
 pub fn classify(ctx: &CheckCtx, action: &Action) -> Classified {
     if let Some((class, _)) = ctx.class_override {
         return Classified::known(class, "host_override");
@@ -291,6 +354,14 @@ pub fn classify(ctx: &CheckCtx, action: &Action) -> Classified {
             _ => Classified::unknown(),
         },
         Source::ServerTool => Classified::unknown(),
+        Source::AgentInterface => agent_interface_class(ctx, action),
+        // A model turn or a usage read: compute, nothing written outside the account.
+        Source::Builtin => match action.tool.as_str() {
+            "inference.execute_routed_turn" | "inference.get_routed_usage" => {
+                Classified::known(ActionClass::Read, "builtin_table")
+            }
+            _ => Classified::unknown(),
+        },
     }
 }
 
@@ -346,15 +417,34 @@ impl Decision {
     }
 }
 
+/// Shadow-mode failures since the process started: no signing key (Desktop has not handed it
+/// over), and anything else (store unreachable, task failure).
+static SHADOW_NO_KEY: AtomicU64 = AtomicU64::new(0);
+static SHADOW_OTHER: AtomicU64 = AtomicU64::new(0);
+
+/// Shadow-mode failure counts `(no_key, other)` since the process started.
+pub fn shadow_failure_counts() -> (u64, u64) {
+    (SHADOW_NO_KEY.load(Ordering::Relaxed), SHADOW_OTHER.load(Ordering::Relaxed))
+}
+
 /// A kernel failure: deny in enforce mode, log and run in shadow mode.
 fn failure(mode: Mode, e: AuthorityError) -> Decision {
-    match mode {
-        Mode::Enforce => Decision::Deny(e),
-        _ => {
-            tracing::warn!(code = ?e.code, error = %e.message, "kernel check unavailable (shadow mode: tool runs)");
-            Decision::Allow { receipt_id: None }
-        }
+    failure_counted(mode, e, &SHADOW_OTHER, "kernel check unavailable")
+}
+
+/// Same, counted in `counter`: the first one in the process is a warning, later ones are debug
+/// lines with the running count, so shadow mode does not log a warning on every tool call.
+fn failure_counted(mode: Mode, e: AuthorityError, counter: &AtomicU64, what: &str) -> Decision {
+    if mode == Mode::Enforce {
+        return Decision::Deny(e);
     }
+    let n = counter.fetch_add(1, Ordering::Relaxed) + 1;
+    if n == 1 {
+        tracing::warn!(code = ?e.code, error = %e.message, "{what} (shadow mode: tools run; logged once per process, later ones at debug)");
+    } else {
+        tracing::debug!(code = ?e.code, error = %e.message, count = n, "{what} (shadow mode: tool runs)");
+    }
+    Decision::Allow { receipt_id: None }
 }
 
 fn rule_str(rule: Rule) -> &'static str {
@@ -374,7 +464,7 @@ pub async fn check(ctx: &CheckCtx, action: &Action) -> Decision {
     }
     let signer = match tokens::kernel_signer(&ctx.data_dir()) {
         Ok(s) => s,
-        Err(e) => return failure(mode, e),
+        Err(e) => return failure_counted(mode, e, &SHADOW_NO_KEY, "kernel signing key unavailable"),
     };
     let (ctx, action) = (ctx.clone(), action.clone());
     match tokio::task::spawn_blocking(move || check_blocking(&ctx, &action, mode, signer, Utc::now())).await {
@@ -397,9 +487,9 @@ pub fn check_blocking(ctx: &CheckCtx, action: &Action, mode: Mode, signer: Arc<R
     };
     let check_id = format!("chk_{}", uuid::Uuid::new_v4().simple());
     let run_id = ctx.run_id.clone().unwrap_or_else(|| format!("tool:{}", action.source.as_str()));
-    let tenant = ctx.tenant.clone().unwrap_or_else(|| DEFAULT_TENANT.to_string());
+    let tenant = ctx.tenant.clone();
     let caller = Caller { kind: ctx.caller_kind, principal: ctx.user_id.clone() };
-    let kernel = SqlAuthority::new(ctx.db.clone(), signer.clone()).with_tenant(ctx.tenant.clone()).at(now);
+    let kernel = SqlAuthority::new(ctx.db.clone(), signer.clone()).with_tenant(Some(ctx.tenant.clone())).at(now);
 
     // Never the arguments: a receipt holds no secret value.
     let mut receipt = json!({
@@ -654,6 +744,73 @@ mod tests {
         assert!(matches!(d, Decision::Allow { receipt_id: Some(_) }), "{d:?}");
         let d = check_blocking(&with, &write_action(), Mode::Enforce, signer(), t0());
         assert!(matches!(&d, Decision::Deny(e) if e.code == ErrorCode::TokenReplayed), "{d:?}");
+    }
+
+    fn org_user() -> crate::auth::AuthUser {
+        crate::auth::AuthUser {
+            user_id: USER.into(),
+            email: None,
+            name: None,
+            avatar_url: None,
+            tenant_id: Some("tenant_1".into()),
+            organization_id: Some("org_1".into()),
+            organization_role: None,
+            organization_slug: None,
+        }
+    }
+
+    /// One scope rule: an org user's check receipt, written from the native path (which only
+    /// has the organization-or-tenant id) or from `for_user` (computer_v2), is in the chain the
+    /// receipts route lists for that user.
+    #[test]
+    fn org_users_check_receipt_appears_in_their_receipts_list() {
+        let db = DbHandle::new_memory().unwrap();
+        let user = org_user();
+        assert_eq!(super::super::kernel_scope(&user), "org_1");
+        let native = CheckCtx::new(db.clone(), &user.user_id, super::super::org_or_tenant(&user));
+        let computer = CheckCtx::for_user(db.clone(), &user);
+        assert_eq!(native.tenant, computer.tenant);
+        let read = Action::new(Source::Native, "file.read", &json!({ "path": "/tmp/x" }));
+        let d = check_blocking(&native, &read, Mode::Shadow, signer(), t0());
+        let Decision::Allow { receipt_id: Some(rid) } = d.clone() else { panic!("expected an allow receipt, got {d:?}") };
+        let scope = super::super::routes::receipt_scope(user.user_id.clone(), &user);
+        let rows = super::super::audit::list(&db.connect().unwrap(), &scope, 100, None).unwrap();
+        assert!(rows.iter().any(|r| r.to_string().contains(&rid)), "check receipt {rid} missing from {rows:?}");
+    }
+
+    #[test]
+    fn agent_interface_and_builtin_tools_are_classified() {
+        let db = DbHandle::new_memory().unwrap();
+        db.connect()
+            .unwrap()
+            .execute(
+                "INSERT INTO agents (id, user_id, name, model, provider, is_bot, config) VALUES ('bot_1', ?1, 'B', 'm', 'p', 1, '{}')",
+                [USER],
+            )
+            .unwrap();
+        let c = ctx(&db);
+        let send = |bot: &str| classify(&c, &Action::new(Source::AgentInterface, "agent_send", &json!({ "bot_id": bot, "text": "hi" })));
+        assert_eq!(send("bot_1").class, ActionClass::RunControl, "the user's own bot");
+        assert_eq!(send("someone_elses_bot").class, ActionClass::ClientMessage, "leaves the user's own agents");
+        assert_eq!(classify(&c, &Action::new(Source::AgentInterface, "list_runs", &json!({}))).class, ActionClass::Read);
+        assert!(classify(&c, &Action::new(Source::AgentInterface, "agent_delete", &json!({}))).forced_ask);
+        assert_eq!(classify(&c, &Action::new(Source::Builtin, "inference.execute_routed_turn", &json!({}))).class, ActionClass::Read);
+        assert!(classify(&c, &Action::new(Source::Builtin, "inference.something_new", &json!({}))).forced_ask);
+    }
+
+    /// No signing key in shadow mode: the tool runs every time, the failure is counted (one
+    /// warning per process, then debug lines), never a block.
+    #[test]
+    fn shadow_failure_is_counted_and_never_blocks() {
+        let (before, _) = shadow_failure_counts();
+        for _ in 0..3 {
+            let e = AuthorityError::kernel_unavailable("kernel signing key: not handed over");
+            let d = failure_counted(Mode::Shadow, e, &SHADOW_NO_KEY, "kernel signing key unavailable");
+            assert!(matches!(d, Decision::Allow { receipt_id: None }));
+        }
+        assert!(shadow_failure_counts().0 >= before + 3);
+        let e = AuthorityError::kernel_unavailable("x");
+        assert!(matches!(failure_counted(Mode::Enforce, e, &SHADOW_NO_KEY, "x"), Decision::Deny(_)));
     }
 
     #[tokio::test]

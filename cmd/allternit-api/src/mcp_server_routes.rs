@@ -493,7 +493,7 @@ async fn handle_rpc_gated(
         audience.as_deref(),
     ) {
         Ok(_) => {
-            let org_id = user.organization_id.as_deref().or(user.tenant_id.as_deref());
+            let org_id = crate::authority::org_or_tenant(&user);
             // OAuth access tokens (ChatGPT / Claude connectors) are verified
             // for audience + scope and limited to the read-only agent tools.
             let agents_only = match crate::mcp_agents::authorize_bearer(state, &headers).await {
@@ -674,9 +674,16 @@ async fn dispatch_method(
                 .get("approval_token")
                 .and_then(|v| v.as_str())
                 .map(str::to_string);
+            // One kernel context for every path below. Each path runs exactly one `check`:
+            // agents tools, agent-interface tools and `inference.*` check here; `time.now` and
+            // native tools in `execute_tool_internal`; `<server>.<tool>` in `dispatch_call`.
+            // Scope: `org_id` is the organization-or-tenant id, so the chain is
+            // `authority::kernel_scope`'s.
+            let kernel_ctx = crate::authority::check::CheckCtx::new(state.db.clone(), user_id, org_id)
+                .with_token(approval_token.clone());
 
             if let Some(result) =
-                crate::mcp_agents::call_tool(state, user_id, &name, arguments.clone()).await
+                crate::mcp_agents::call_tool(state, &kernel_ctx, user_id, &name, arguments.clone()).await
             {
                 return success(id, result);
             }
@@ -685,12 +692,10 @@ async fn dispatch_method(
             }
 
             let result = if is_aai_tool(&name) {
-                call_aai_tool(state, user_id, &name, arguments).await
+                call_aai_tool(state, &kernel_ctx, user_id, &name, arguments).await
             } else if name.starts_with("inference.") || name == "time.now" {
-                handle_builtin_dotted_tool(state, user_id, org_id, &name, arguments).await
+                handle_builtin_dotted_tool(state, &kernel_ctx, user_id, org_id, &name, arguments, approval_token).await
             } else if name.contains('.') {
-                let kernel_ctx = crate::authority::check::CheckCtx::new(state.db.clone(), user_id, org_id)
-                    .with_token(approval_token.clone());
                 state
                     .mcp_dispatcher
                     .dispatch_call(&kernel_ctx, &name, arguments.clone())
@@ -752,8 +757,20 @@ pub(crate) fn aai_tool_descriptors() -> Vec<Value> {
     ]
 }
 
-pub(crate) async fn call_aai_tool(state: &Arc<AppState>, user_id: &str, name: &str, a: Value) -> Result<Value, String> {
+pub(crate) async fn call_aai_tool(
+    state: &Arc<AppState>,
+    kernel_ctx: &crate::authority::check::CheckCtx,
+    user_id: &str,
+    name: &str,
+    a: Value,
+) -> Result<Value, String> {
     use crate::aai_facade as f;
+    // Authority kernel check (plan step 9) before the tool runs: reads are `read`; `agent_send`
+    // is `run_control` to the caller's own bot, `client_message` (human-only) otherwise.
+    {
+        use crate::authority::check::{check, Action, Source};
+        check(kernel_ctx, &Action::new(Source::AgentInterface, name, &a)).await.into_tool_result()?;
+    }
     let req = |k: &str| a[k].as_str().filter(|s| !s.is_empty()).ok_or_else(|| format!("{k} is required"));
     let fail = |e: f::FacadeErr| e.to_json().to_string();
     match name {
@@ -789,11 +806,20 @@ pub(crate) async fn call_aai_tool(state: &Arc<AppState>, user_id: &str, name: &s
 
 async fn handle_builtin_dotted_tool(
     state: &Arc<AppState>,
+    kernel_ctx: &crate::authority::check::CheckCtx,
     user_id: &str,
     org_id: Option<&str>,
     name: &str,
     arguments: Value,
+    approval_token: Option<String>,
 ) -> Result<Value, String> {
+    // `inference.*` is checked here (class `read`: compute, nothing written outside the
+    // account). Anything else (`time.now`) goes to `execute_tool_internal`, which checks it, so
+    // no call is checked twice.
+    if name.starts_with("inference.") {
+        use crate::authority::check::{check, Action, Source};
+        check(kernel_ctx, &Action::new(Source::Builtin, name, &arguments)).await.into_tool_result()?;
+    }
     match name {
         "inference.execute_routed_turn" => {
             let provider = arguments
@@ -830,6 +856,7 @@ async fn handle_builtin_dotted_tool(
                 args: arguments,
                 timeout: None,
                 workspace_id: None,
+                approval_token,
                 ..Default::default()
             };
             execute_tool_internal(state, &exec_request, user_id, org_id).await
@@ -847,25 +874,76 @@ mod tests {
         let names: Vec<_> = aai_tool_descriptors().iter().map(|t| t["name"].as_str().unwrap().to_string()).collect();
         assert_eq!(names, ["agents_list", "agent_send", "thread_events", "approvals_list", "approval_respond"]);
         let st = crate::aai_facade::test_util::setup("mcp", "READY").await;
-        let a = call_aai_tool(&st, "user-a", "agents_list", json!({})).await.unwrap();
+        // Forwarding behaviour; the kernel check is covered by the tests below.
+        let off = |u: &str| crate::authority::check::CheckCtx::new(st.db.clone(), u, None).with_mode(crate::authority::check::Mode::Off);
+        let a = call_aai_tool(&st, &off("user-a"), "user-a", "agents_list", json!({})).await.unwrap();
         assert_eq!(a["agents"].as_array().unwrap().len(), 2);
-        assert!(call_aai_tool(&st, "user-b", "agents_list", json!({})).await.unwrap()["agents"].as_array().unwrap().is_empty());
+        assert!(call_aai_tool(&st, &off("user-b"), "user-b", "agents_list", json!({})).await.unwrap()["agents"].as_array().unwrap().is_empty());
         // 428 comes back as a tool error carrying the approval id.
-        let e = call_aai_tool(&st, "user-a", "agent_send", json!({ "bot_id": "bot-vendor", "thread_id": "th-vendor", "text": "wire $5k", "consequential": true })).await.unwrap_err();
+        let e = call_aai_tool(&st, &off("user-a"), "user-a", "agent_send", json!({ "bot_id": "bot-vendor", "thread_id": "th-vendor", "text": "wire $5k", "consequential": true })).await.unwrap_err();
         let e: Value = serde_json::from_str(&e).unwrap();
         assert_eq!(e["status"], 428);
         let aid = e["approvalId"].as_str().unwrap().to_string();
-        let l = call_aai_tool(&st, "user-a", "approvals_list", json!({ "thread_id": "th-vendor", "state": "pending" })).await.unwrap();
+        let l = call_aai_tool(&st, &off("user-a"), "user-a", "approvals_list", json!({ "thread_id": "th-vendor", "state": "pending" })).await.unwrap();
         assert_eq!(l["approvals"][0]["id"], aid.as_str());
         // MCP can never answer it, and it stays pending.
-        let r = call_aai_tool(&st, "user-a", "approval_respond", json!({ "approval_id": aid, "decision": "approve" })).await.unwrap_err();
+        let r = call_aai_tool(&st, &off("user-a"), "user-a", "approval_respond", json!({ "approval_id": aid, "decision": "approve" })).await.unwrap_err();
         assert!(r.contains("HUMAN_REQUIRED"));
-        let l = call_aai_tool(&st, "user-a", "approvals_list", json!({ "thread_id": "th-vendor", "state": "pending" })).await.unwrap();
+        let l = call_aai_tool(&st, &off("user-a"), "user-a", "approvals_list", json!({ "thread_id": "th-vendor", "state": "pending" })).await.unwrap();
         assert_eq!(l["approvals"].as_array().unwrap().len(), 1);
         // The tool call also flows through the JSON-RPC dispatcher.
         let req: JsonRpcRequest = serde_json::from_value(json!({ "id": 1, "method": "tools/call", "params": { "name": "thread_events", "arguments": { "thread_id": "th-vendor" } } })).unwrap();
         let out = handle_rpc_inner_value(&st, "user-a", None, req, false).await;
         assert_eq!(out["result"]["isError"], false);
+    }
+
+    fn last_check(st: &Arc<AppState>, tool: &str) -> (String, String, String, String) {
+        st.db
+            .connect()
+            .unwrap()
+            .query_row(
+                "SELECT json_extract(payload, '$.action_class'), decision, json_extract(payload, '$.surface'), tenant
+                 FROM kernel_receipts WHERE kind = 'check' AND json_extract(payload, '$.tool') = ?1 ORDER BY rowid DESC LIMIT 1",
+                [tool],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+            )
+            .unwrap()
+    }
+
+    /// `agent_send` passes the kernel check: the caller's own bot is `run_control` (allowed, so
+    /// the facade's own consequential-approval 428 still comes back); another user's bot would
+    /// leave the user's own agents, so it is `client_message` and refused before the send.
+    #[tokio::test]
+    async fn agent_send_is_checked_once_before_the_send() {
+        use crate::authority::check::{is_approval_required, CheckCtx, Mode};
+        let st = crate::aai_facade::test_util::setup("mcp-kernel", "READY").await;
+        let own = CheckCtx::new(st.db.clone(), "user-a", Some("org_1")).with_mode(Mode::Enforce);
+        let args = json!({ "bot_id": "bot-vendor", "thread_id": "th-vendor", "text": "wire $5k", "consequential": true });
+        let e = call_aai_tool(&st, &own, "user-a", "agent_send", args.clone()).await.unwrap_err();
+        assert!(!is_approval_required(&e), "own bot is run_control, the facade answers: {e}");
+        assert_eq!(last_check(&st, "agent_send"), (String::from("run_control"), String::from("allow"), String::from("agent_interface"), String::from("org_1")));
+        let checks = |st: &Arc<AppState>| -> i64 {
+            st.db.connect().unwrap().query_row("SELECT COUNT(*) FROM kernel_receipts WHERE kind = 'check'", [], |r| r.get(0)).unwrap()
+        };
+        assert_eq!(checks(&st), 1, "exactly one check per tool call");
+
+        let other = CheckCtx::new(st.db.clone(), "user-b", None).with_mode(Mode::Enforce);
+        let e = call_aai_tool(&st, &other, "user-b", "agent_send", args).await.unwrap_err();
+        assert!(is_approval_required(&e), "{e}");
+        assert_eq!(last_check(&st, "agent_send").0, "client_message");
+    }
+
+    /// `inference.*` is `read`: in shadow mode it runs, with an `allow` check receipt.
+    #[tokio::test]
+    async fn inference_builtin_passes_in_shadow_with_a_receipt() {
+        use crate::authority::check::{CheckCtx, Mode};
+        let st = crate::aai_facade::test_util::setup("mcp-inference", "READY").await;
+        let ctx = CheckCtx::new(st.db.clone(), "user-a", None).with_mode(Mode::Shadow);
+        let out = handle_builtin_dotted_tool(&st, &ctx, "user-a", None, "inference.get_routed_usage", json!({ "limit": 5 }), None)
+            .await
+            .unwrap();
+        assert!(out["events"].is_array(), "{out}");
+        assert_eq!(last_check(&st, "inference.get_routed_usage"), (String::from("read"), String::from("allow"), String::from("builtin"), String::from("default")));
     }
 
     #[test]

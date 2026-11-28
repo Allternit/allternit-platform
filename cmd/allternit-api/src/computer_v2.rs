@@ -190,8 +190,8 @@ pub async fn execute_v2(
             .member(member)
             .or_else(|| crate::computer_toolset::contract(Toolset::Browser).member(member))
             .map(|m| m.risk.as_str());
-        // Same chain scope as the kernel routes (`AuthUser::tenant_id`).
-        let ctx = CheckCtx::new(state.db.clone(), &user.user_id, user.tenant_id.as_deref())
+        // Same chain scope as every kernel path (`authority::kernel_scope`).
+        let ctx = CheckCtx::for_user(state.db.clone(), user)
             .with_run_id(Some(run_id.to_string()))
             .with_token(token);
         let mut args = input.clone();

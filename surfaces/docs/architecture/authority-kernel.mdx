@@ -47,8 +47,13 @@ In allternit-api, `check` runs inside the functions that execute tools, not in t
 | Org server tools | `server_tool_routes::execute_server_tool` | Always `ask`. A server tool can share a name with a native tool, so its name is never trusted |
 | Attached MCP servers | `mcp_dispatcher::dispatch_call` | `ask`, except an app's `complete_checkout`, which is `money` |
 | Computer members (`read_ui`, `act`, `use_credential`, ...) | `computer_v2::execute_v2` | The computer contract's `risk` field; `use_credential` is `secret_new_host` |
+| Agents tools on the MCP server (`list_agents`, `get_run`, `get_run_result`, ...) | `mcp_agents::call_tool` | `read` |
+| Agent-interface MCP tools (`agent_send`, `agents_list`, `thread_events`, `approvals_list`, `approval_respond`) | `mcp_server_routes::call_aai_tool` | `agent_send` to one of your own bots is `run_control`; a send that would leave your own agents is `client_message` (human-only). The rest are `read` (`approval_respond` never approves over MCP) |
+| MCP `inference.*` built-ins | `mcp_server_routes::handle_builtin_dotted_tool` | `read` (a model turn or a usage read). `time.now` goes on to the native path and is checked there |
 
 A tool that is not in a table is `ask`, never allow. Until onboarding records an autonomy level, every account is "Ask me first".
+
+Every check writes its receipt to the same chain the [receipt routes](#receipt-routes) read: your account plus one tenant value, the same on every path. That value is your organization when you are in one, otherwise your account's tenant, otherwise `default` (`authority::kernel_scope` in allternit-api). So a check made from a native tool, an MCP call or a computer member shows up in `GET /api/v1/kernel/receipts`.
 
 For an `ask` or human-only class, the call must carry an approval token bound to the `sha256:` hash of the canonical action `{tool, args}`. The token goes outside the arguments: `approval_token` on `/tools/execute` and on MCP `tools/call`, `kernel_approval_token` in a computer member's input. Without one, the kernel writes a receipt, opens an approval request for that exact action and refuses with code `approval_required` and the request id (HTTP 202 on `/tools/execute`). After a person approves, the caller retries the same call with the token. A token for a different payload, a spent token or an expired token is refused with a receipt.
 
@@ -62,7 +67,7 @@ For an `ask` or human-only class, the call must carry an approval token bound to
 | `shadow` (default) | yes, with what enforce would have done | no |
 | `enforce` (the target) | yes | yes |
 
-Shadow mode lets the build ship without breaking live tool calls while the receipts show what enforce would refuse. In shadow mode a kernel failure is logged and the tool runs; in enforce mode it is a denial (`kernel_unavailable`). The older permission policy on `/tools/execute` still runs first. A tool runs only when both allow it, so a kernel denial always wins.
+Shadow mode lets the build ship without breaking live tool calls while the receipts show what enforce would refuse. In shadow mode a kernel failure is logged and the tool runs; in enforce mode it is a denial (`kernel_unavailable`). Shadow mode logs a failure as a warning once per process (one for a missing signing key, for example when Desktop has not handed it over yet, and one for any other failure), then counts later ones at debug level, so the log does not fill with one warning per tool call. The older permission policy on `/tools/execute` still runs first. A tool runs only when both allow it, so a kernel denial always wins.
 
 ## Approval tokens
 
