@@ -24,3 +24,14 @@ When an agent's turn raises an approval, the agent's tool call fails with a "try
 When an agent with autonomy `ask` tries to text or call, the approval has `kind` for that action and `proposed_action.summary` carries what it wants to do, for example `text +15555550123`, with the text or call purpose in the proposed action. Approve it, then send a new response with `previous_response_id`. The agent's next attempt sends exactly the approved text. One approval allows one send: after the send the approval reads `consumed`, and the next text raises a new approval. If you deny it, nothing is sent, and the agent's next attempt raises a new approval.
 
 Webhooks: `approval.requested`, `approval.resolved`, `approval.expired`.
+
+## Kernel approvals (rolling out with the next release)
+
+`GET /v1/approvals?source=kernel` lists this project's authority kernel approval rows, read-only. Each row has a `kernel` object: `action_class`, `action_summary`, `action_hash`, `deadline`, `human_only`, `run_id`, `principal`, `decided_by` and the check and redemption receipt ids. The full proposed arguments are not returned.
+
+- Shadow rows never list.
+- A key tied to one account sees none.
+- The default list and `GET /v1/approvals/{id}` are unchanged.
+- `POST /v1/approvals/{id}` on a kernel row returns `403 forbidden_caller`. A person approves in the Allternit app or on the phone. See [Approvals in your inbox](/guides/inbox-approvals).
+
+Not built, not live.

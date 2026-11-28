@@ -10,7 +10,8 @@ Both pages are in the Platform API group and work on the selected [project](/con
 The Approvals page (`/approvals`) uses `GET /v1/approvals`. It lists actions your agents proposed that need the owner's OK.
 
 - Filter by status: pending, approved, denied, expired or consumed.
-- Filter by source: Twin or Computer.
+- Filter by source: Twin, Computer or Kernel.
+- Kernel rows are read-only. They show the action class, the exact action summary, a short action hash you can copy, the deadline, a human-only badge, who decided and the receipt ids. They have no Approve or Deny buttons; they say "Approve on the Allternit app or phone". Rolling out with the next release, not live yet.
 - Select **Approve** or **Deny**. This calls `POST /v1/approvals/:id` with a `decision` of `approve` or `deny`.
 - Follow the links to the conversation or response that proposed the action.
 

@@ -432,3 +432,7 @@ The same three moments arrive as notifications when the app is closed. **Approve
 Tapping an agent browser notification opens that run's screen, not the console.
 
 For developers: `AciData.kt` in `feature/computer` reads the computer's toolset events (`/api/v1/computers/:id/toolset/events`, one SSE name `computer.action`, kind in the JSON `type`) and calls approve, deny, human-done, block-resolve and a re-run (`rerun_of`). `AciRunGate.kt` is the sheet. `core/auth/DeviceAuth.kt` is the unlock check, and `feature/push` maps `aci_approval`, `aci_human` and `aci_blocked` to the ACI_APPROVAL, ACI_HUMAN and ACI_BLOCKED notification categories.
+
+## Approvals
+
+Approval requests show in the inbox and arrive as a push. Read the exact action, then approve or deny. Rolling out with the next release, not live yet. See [Approvals in your inbox](/guides/inbox-approvals).
