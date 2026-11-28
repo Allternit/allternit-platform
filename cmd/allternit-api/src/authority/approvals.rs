@@ -508,8 +508,12 @@ fn not_yet(call: &str, step: u8) -> AuthorityError {
 /// The crate's trait. The approval calls are real; the rest fail closed (`kernel_unavailable`,
 /// which every caller treats as DENY) until their plan steps land.
 impl Authority for SqlAuthority {
+    /// The wire-level `check` (a raw `PolicyCheckV1`) has no caller in allternit-api yet: the tool
+    /// paths call [`super::check::check`] directly (step 9). Fail closed until a transport needs it.
     fn check(&mut self, _: &Caller, _: PolicyCheck) -> Result<PolicyDecision, AuthorityError> {
-        Err(not_yet("check", 9))
+        Err(AuthorityError::kernel_unavailable(
+            "the wire-level check has no transport in allternit-api yet; tool paths use authority::check (fail closed)",
+        ))
     }
     fn lease(&mut self, _: &Caller, _: LeaseRequest) -> Result<LeaseResponse, AuthorityError> {
         Err(not_yet("lease", 12))
@@ -654,7 +658,7 @@ mod tests {
     fn redeem_after_expiry_is_denied_and_ttl_is_capped_at_900s() {
         let k = kernel();
         let (req, token) = approved(&k, Some(60));
-        let late = SqlAuthority { db: k.db.clone(), signer: k.signer.clone(), now: Some(t0() + Duration::seconds(61)) };
+        let late = SqlAuthority::new(k.db.clone(), k.signer.clone()).at(t0() + Duration::seconds(61));
         let err = late.redeem(&run(), ApprovalRedeemBody { token: token.token, action_hash: req.action_hash.unwrap() }).unwrap_err();
         assert_eq!(err.code, ErrorCode::TokenExpired);
         assert!(err.receipt_id.is_some());

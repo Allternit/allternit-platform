@@ -37,6 +37,33 @@ The person picks one of three autonomy levels in onboarding: "Ask me first", "As
 
 `money`, `client_message`, `deploy`, `secret_new_host` and `irreversible` always need a human approval, at every autonomy level. Policy may allow other classes; it never approves these five.
 
+## Where `check` runs
+
+In allternit-api, `check` runs inside the functions that execute tools, not in the HTTP routes, because some callers (the routine scheduler, the MCP server) never pass through HTTP. Each tool call gets exactly one check:
+
+| Path | Function | How the class is picked |
+|---|---|---|
+| Native tools (`POST /tools/execute`, MCP `tools/call`, routine monitors) | `tool_routes::execute_tool_internal` | A fixed table: `file.read` is `read`, `file.write` and the shell tools are `file_write`, `http.*` is `network`, `file.remove` is `irreversible` |
+| Org server tools | `server_tool_routes::execute_server_tool` | Always `ask`. A server tool can share a name with a native tool, so its name is never trusted |
+| Attached MCP servers | `mcp_dispatcher::dispatch_call` | `ask`, except an app's `complete_checkout`, which is `money` |
+| Computer members (`read_ui`, `act`, `use_credential`, ...) | `computer_v2::execute_v2` | The computer contract's `risk` field; `use_credential` is `secret_new_host` |
+
+A tool that is not in a table is `ask`, never allow. Until onboarding records an autonomy level, every account is "Ask me first".
+
+For an `ask` or human-only class, the call must carry an approval token bound to the `sha256:` hash of the canonical action `{tool, args}`. The token goes outside the arguments: `approval_token` on `/tools/execute` and on MCP `tools/call`, `kernel_approval_token` in a computer member's input. Without one, the kernel writes a receipt, opens an approval request for that exact action and refuses with code `approval_required` and the request id (HTTP 202 on `/tools/execute`). After a person approves, the caller retries the same call with the token. A token for a different payload, a spent token or an expired token is refused with a receipt.
+
+### Modes
+
+`ALLTERNIT_KERNEL_CHECK` picks how hard the check bites:
+
+| Value | Receipt | Blocks |
+|---|---|---|
+| `off` | no | no; only the older permission policy applies |
+| `shadow` (default) | yes, with what enforce would have done | no |
+| `enforce` (the target) | yes | yes |
+
+Shadow mode lets the build ship without breaking live tool calls while the receipts show what enforce would refuse. In shadow mode a kernel failure is logged and the tool runs; in enforce mode it is a denial (`kernel_unavailable`). The older permission policy on `/tools/execute` still runs first. A tool runs only when both allow it, so a kernel denial always wins.
+
 ## Approval tokens
 
 A request carries the exact action payload and a deadline. A human session resolves it and the kernel issues a single-use approval token. The kernel rejects any resolve from a run token, bot token, agent credential, MCP client token or model request, and writes a receipt for the rejection. A human cannot approve a request made by a run they control.

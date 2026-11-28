@@ -375,6 +375,7 @@ async fn delete_server_tool(
 /// fall through to native tool handling.
 pub async fn execute_server_tool(
     state: &AppState,
+    kernel_ctx: &crate::authority::check::CheckCtx,
     tool_name: &str,
     args: &Value,
     org_id: &str,
@@ -409,6 +410,14 @@ pub async fn execute_server_tool(
         return Ok(None);
     };
     let timeout_secs: i64 = timeout_secs;
+
+    // Authority kernel check (plan step 9), once the server tool is known to exist and before its
+    // code runs. A server tool shadows a native tool of the same name, so it is classified as a
+    // server tool (ask), never by its name.
+    {
+        use crate::authority::check::{check, Action, Source};
+        check(kernel_ctx, &Action::new(Source::ServerTool, tool_name, args)).await.into_tool_result()?;
+    }
 
     let mut env: HashMap<String, String> =
         serde_json::from_str(&env_json).map_err(|e| e.to_string())?;

@@ -111,6 +111,13 @@ pub struct ExecuteToolRequest {
     /// providers that support prompt caching (e.g. Anthropic).
     #[serde(default)]
     pub cache: Option<bool>,
+    /// An `ApprovalTokenV1.token` for an ask or human-only tool (authority kernel `check`). Kept
+    /// outside `args`, so it is not part of the hashed action.
+    #[serde(default)]
+    pub approval_token: Option<String>,
+    /// The run this call belongs to (receipt chain context).
+    #[serde(default)]
+    pub run_id: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -246,6 +253,14 @@ async fn execute_tool(
                 "cache_control": cache_control,
             })
         }
+        // The authority kernel wants a person's approval first: same 202 shape as the policy ask.
+        Err(e) if crate::authority::check::is_approval_required(&e) => {
+            let mut out = serde_json::from_str::<Value>(&e).unwrap_or_else(|_| json!({}));
+            out["status"] = json!("approval_required");
+            out["tool"] = json!(body.tool);
+            out["kernel"] = json!(true);
+            return (StatusCode::ACCEPTED, Json(out));
+        }
         Err(e) => {
             warn!("Tool '{}' failed: {}", body.tool, e);
             json!({
@@ -295,6 +310,16 @@ async fn deny_tool_execution(
 
 // ─── Tool Implementations ───────────────────────────────────────────────────
 
+/// Every tool name the match in [`execute_tool_internal`] runs. A name missing here is refused as
+/// unknown before the kernel check, so the list can only fail closed.
+const NATIVE_TOOLS: &[&str] = &[
+    "shell.exec", "shell.eval", "bash", "code_execution", "file.read", "file.write", "file.list", "file.exists",
+    "file.remove", "system.info", "system.env", "http.get", "http.post", "document_to_markdown", "url_to_markdown",
+    "time.now", "echo", "api_capture_record", "api_capture_stop", "api_capture_replay", "computer_screenshot",
+    "computer_mouse", "computer_keyboard", "computer_shell", "computer_file_read", "computer_file_write",
+    "computer_create", "computer_list", "computer_start", "computer_stop", "computer_resize", "computer_clone",
+];
+
 /// `pub(crate)`: also called by `mcp_server_routes.rs`'s `tools/call` handler,
 /// so the same tool set is reachable both as a plain REST call and as an
 /// MCP server tool — one registry, two front doors, same auth gate.
@@ -313,14 +338,38 @@ pub(crate) async fn execute_tool_internal(
         ));
     }
 
+    // Authority kernel context (plan step 9). Every caller reaches this function, HTTP or not
+    // (MCP `tools/call`, the routine scheduler), so the gate lives here and not in the route.
+    let kernel_ctx = crate::authority::check::CheckCtx::new(state.db.clone(), user_id, tenant_id)
+        .with_run_id(request.run_id.clone())
+        .with_token(request.approval_token.clone());
+
     // Server-side tools take precedence over native tools when registered for
-    // the caller's organization. They run inside the platform sandbox.
+    // the caller's organization. They run inside the platform sandbox, and are
+    // checked inside `execute_server_tool` once it knows the tool exists.
     if let Some(org_id) = tenant_id {
-        match crate::server_tool_routes::execute_server_tool(state, &request.tool, &request.args, org_id).await {
+        match crate::server_tool_routes::execute_server_tool(state, &kernel_ctx, &request.tool, &request.args, org_id).await {
             Ok(Some(result)) => return Ok(result),
             Ok(None) => {}
             Err(e) => return Err(e),
         }
+    }
+
+    // One kernel check for a native tool, before anything runs. A refusal (approval required,
+    // denied, kernel unavailable in enforce mode) comes back as a JSON error string.
+    // A name not in NATIVE_TOOLS runs nothing: refuse it before the check, so enforce mode opens
+    // no approval request for a tool that does not exist. Fails closed: a new match arm that is
+    // missing from the list answers "Unknown tool" instead of running unchecked.
+    if !NATIVE_TOOLS.contains(&request.tool.as_str()) {
+        return Err(if request.tool.starts_with("mcp:") {
+            format!("MCP tool execution not yet implemented for '{}'", request.tool)
+        } else {
+            format!("Unknown tool: '{}'", request.tool)
+        });
+    }
+    {
+        use crate::authority::check::{check, Action, Source};
+        check(&kernel_ctx, &Action::new(Source::Native, &request.tool, &request.args)).await.into_tool_result()?;
     }
 
     match request.tool.as_str() {
