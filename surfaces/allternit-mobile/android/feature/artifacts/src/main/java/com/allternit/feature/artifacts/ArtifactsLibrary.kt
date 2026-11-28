@@ -36,10 +36,10 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.layout
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.unit.Dp
 import com.allternit.core.design.DockSpec
+import com.allternit.core.design.rememberDockOffset
 import com.allternit.core.design.DockingBlockTitle
 import com.allternit.core.design.EmptyBox
 import com.allternit.core.design.GlassPill
@@ -365,10 +365,8 @@ fun ArtifactsLibraryScreen(
     Box(Modifier.fillMaxSize()) {
     Box(Modifier.fillMaxSize().statusBarsPadding().testTag("artifactsLibrary")) {
     val gridState = rememberLazyGridState()
-    val density = LocalDensity.current.density
-    val dockOffset = remember(gridState, density) {
-        { if (gridState.firstVisibleItemIndex > 0) DockSpec.DOCK * 2f else gridState.firstVisibleItemScrollOffset / density }
-    }
+    // A short grid still docks at its bottom; one that does not overflow never docks.
+    val dockOffset = rememberDockOffset(gridState)
     Column(Modifier.fillMaxSize()) {
         Spacer(Modifier.height(52.dp))
         if (searching) {

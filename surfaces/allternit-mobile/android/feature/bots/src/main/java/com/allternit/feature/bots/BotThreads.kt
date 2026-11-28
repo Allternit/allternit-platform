@@ -47,6 +47,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.allternit.core.design.AllternitStatic
 import com.allternit.core.design.AllternitTheme
+import com.allternit.core.design.rememberDockSourceLazyListState
 import com.allternit.core.design.Haptics
 import com.allternit.feature.artifacts.LibraryIconButton
 import com.allternit.feature.artifacts.LibrarySearchField
@@ -93,7 +94,7 @@ internal fun BotThreadsOverview(store: BotModeStore, botId: String?, title: Stri
         .sortedWith(BotThread.order)
     val waiting = botId?.let { store.waitingCount(it) } ?: store.waitingCount
 
-    LazyColumn(modifier.fillMaxWidth().testTag("botThreadsOverview"), contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 24.dp)) {
+    LazyColumn(modifier.fillMaxWidth().testTag("botThreadsOverview"), state = rememberDockSourceLazyListState(), contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 24.dp)) {
         item {
             Row(Modifier.fillMaxWidth().padding(start = 20.dp, end = 8.dp, top = 8.dp), verticalAlignment = Alignment.Bottom) {
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
@@ -264,7 +265,7 @@ internal fun BotThreadTasks(store: BotModeStore, bot: BotRecord, currentSessionI
     LaunchedEffect(Unit) { store.refreshThreads() }
     val rows = store.threads.filter { it.botId == bot.id && !it.incognito && it.group != "resolved" && it.todo.isNotEmpty() }
         .sortedWith(compareByDescending<BotThread> { it.currentSessionId != null && it.currentSessionId == currentSessionId }.then(BotThread.order))
-    LazyColumn(Modifier.fillMaxSize().testTag("botTasks"), contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 24.dp)) {
+    LazyColumn(Modifier.fillMaxSize().testTag("botTasks"), state = rememberDockSourceLazyListState(), contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 24.dp)) {
         // Same title spot and count line as Threads (UI feedback 11-25 C2).
         item {
             Column(Modifier.fillMaxWidth().padding(start = 20.dp, end = 8.dp, top = 8.dp, bottom = 6.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {

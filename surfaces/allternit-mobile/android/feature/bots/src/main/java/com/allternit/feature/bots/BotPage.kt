@@ -44,6 +44,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.allternit.core.design.AllternitStatic
 import com.allternit.core.design.AllternitTheme
+import com.allternit.core.design.rememberDockSourceScrollState
 import com.allternit.feature.artifacts.LibraryHeader
 import com.allternit.feature.artifacts.LibraryNet
 import com.allternit.feature.artifacts.LibrarySearchField
@@ -89,7 +90,7 @@ internal fun BotPageView(bot: BotRecord, store: BotModeStore, nav: BotNavigator,
     // Current task: the thread that is working or waiting on you, the same line the roster shows.
     val nowTask = myThreads.firstOrNull { it.group == "working" || it.group == "waiting" }?.let { it.statusLine?.takeIf { l -> l.isNotEmpty() } ?: it.displayTitle.takeIf { t -> t.isNotEmpty() } }
     val lastActive = botTimeRelative(myThreads.firstOrNull()?.lastActivityAt ?: bot.lastRunAt)
-    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(bottom = 28.dp).testTag("botPage"), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+    Column(Modifier.fillMaxSize().verticalScroll(rememberDockSourceScrollState()).padding(bottom = 28.dp).testTag("botPage"), verticalArrangement = Arrangement.spacedBy(16.dp)) {
         Column(
             Modifier.padding(horizontal = 16.dp).fillMaxWidth().clip(RoundedCornerShape(22.dp))
                 .background(Brush.verticalGradient(if (accent != null) listOf(accent.copy(alpha = 0.32f), accent.copy(alpha = 0.06f)) else listOf(c.textPrimary.copy(alpha = 0.18f), c.textPrimary.copy(alpha = 0.03f))))
@@ -216,7 +217,7 @@ internal fun BotArtifactsList(bot: BotRecord, host: BotsHost) {
         loading = false
     }
     LaunchedEffect(bot.id) { load() }
-    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).testTag("botArtifacts")) {
+    Column(Modifier.fillMaxSize().verticalScroll(rememberDockSourceScrollState()).testTag("botArtifacts")) {
         if (!ListState(loading, error, artifacts.isEmpty(), "Couldn't load artifacts", "Artifacts ${bot.displayName} makes in its chats show here.") { scope.launch { load() } }) {
             RowGroup(Modifier.padding(vertical = 8.dp)) {
                 artifacts.forEachIndexed { i, a ->
@@ -254,7 +255,7 @@ internal fun BotRoutinesView(bot: BotRecord) {
         loading = false
     }
     LaunchedEffect(bot.id) { load() }
-    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(bottom = 24.dp).testTag("botRoutines")) {
+    Column(Modifier.fillMaxSize().verticalScroll(rememberDockSourceScrollState()).padding(bottom = 24.dp).testTag("botRoutines")) {
         if (scheduled.isNotEmpty()) {
             SectionHeader("On a schedule")
             RowGroup {
@@ -322,7 +323,7 @@ internal fun BotMemoryView(bot: BotRecord, nav: BotNavigator, backend: com.allte
     LaunchedEffect(bot.id) { load() }
     val q = search.trim()
     val filtered = if (q.isEmpty()) memories else memories.filter { it.content.contains(q, ignoreCase = true) }
-    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(bottom = 24.dp).testTag("botMemory")) {
+    Column(Modifier.fillMaxSize().verticalScroll(rememberDockSourceScrollState()).padding(bottom = 24.dp).testTag("botMemory")) {
         LibrarySearchField(search, "Search memory", "botMemorySearch", Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) { search = it }
         ImpactMapView(bot.id, backend = backend, openAction = { item -> impactOpen(bot, nav, item) }, onChanged = { scope.launch { load() } })
         SectionHeader("Teach ${bot.displayName}")

@@ -9,18 +9,26 @@ import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.ScrollState
+import androidx.compose.foundation.gestures.Orientation
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyListState
+import androidx.compose.foundation.lazy.grid.LazyGridState
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.Stable
 import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
@@ -41,14 +49,14 @@ import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import kotlinx.coroutines.flow.collectLatest
-import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlin.math.PI
 import kotlin.math.floor
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.sin
 import kotlin.math.sqrt
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.distinctUntilChanged
 
 /*
  * Docking block title (Android port of the approved DockTitle, A2 block of
@@ -272,18 +280,105 @@ fun rememberDockOffset(state: LazyListState): () -> Float {
     }
 }
 
+/** The dock offset for a vertical lazy grid, by the same rules as the [LazyListState] overload. */
+@Composable
+fun rememberDockOffset(state: LazyGridState): () -> Float {
+    val d = LocalDensity.current.density
+    return remember(state, d) {
+        {
+            when {
+                !state.canScrollForward && !state.canScrollBackward -> 0f
+                state.firstVisibleItemIndex > 0 -> DockSpec.DOCK * 2f
+                else -> dockOffsetFor(state.firstVisibleItemScrollOffset / d, state.dockMaxScrollPx() / d)
+            }
+        }
+    }
+}
+
 /**
- * How far this list scrolls in all (px), known only while the first and the last item are both laid out
- * (a short list); otherwise [Float.POSITIVE_INFINITY], and the offset stays unstretched until the end comes
- * into view (the letter springs smooth the change).
+ * How far a lazy list or grid scrolls in all (px), known only while its first and last items are both laid out
+ * (a short page): the first visible item is item 0 at [firstScrollOffset], the last laid-out item is the last
+ * item, and the laid-out content ends at [contentEnd] (item offsets start at the content start). At max scroll
+ * the content ends where the after-padding begins. Otherwise [Float.POSITIVE_INFINITY], and the offset stays
+ * unstretched until the end comes into view (the letter springs smooth the change).
  */
+fun lazyDockMaxScroll(
+    firstIndex: Int,
+    firstScrollOffset: Int,
+    lastIndex: Int,
+    totalItems: Int,
+    contentEnd: Int,
+    afterContentPadding: Int,
+    viewportEndOffset: Int,
+): Float {
+    if (totalItems <= 0 || firstIndex != 0 || lastIndex != totalItems - 1) return Float.POSITIVE_INFINITY
+    return (firstScrollOffset + contentEnd + afterContentPadding - viewportEndOffset).toFloat()
+}
+
 private fun LazyListState.dockMaxScrollPx(): Float {
     val info = layoutInfo
     val last = info.visibleItemsInfo.lastOrNull() ?: return Float.POSITIVE_INFINITY
-    if (firstVisibleItemIndex != 0 || last.index != info.totalItemsCount - 1) return Float.POSITIVE_INFINITY
-    // Item offsets start at the content start; at max scroll the last item ends where the after-padding begins.
-    val remaining = last.offset + last.size + info.afterContentPadding - info.viewportEndOffset
-    return (firstVisibleItemScrollOffset + remaining).toFloat()
+    return lazyDockMaxScroll(
+        firstVisibleItemIndex, firstVisibleItemScrollOffset, last.index, info.totalItemsCount,
+        last.offset + last.size, info.afterContentPadding, info.viewportEndOffset,
+    )
+}
+
+private fun LazyGridState.dockMaxScrollPx(): Float {
+    val info = layoutInfo
+    val items = info.visibleItemsInfo
+    if (items.isEmpty() || info.orientation != Orientation.Vertical) return Float.POSITIVE_INFINITY
+    // A grid row holds several items: the content ends at the lowest cell.
+    return lazyDockMaxScroll(
+        firstVisibleItemIndex, firstVisibleItemScrollOffset, items.maxOf { it.index }, info.totalItemsCount,
+        items.maxOf { it.offset.y + it.size.height }, info.afterContentPadding, info.viewportEndOffset,
+    )
+}
+
+/**
+ * Where a frame whose bar sits above its scrolling content (Bots `BotDockFrame`) learns the content's real
+ * scroll. The bar is not inside the content, so [LocalDockOffset] cannot reach it; instead the content's
+ * scroller registers its dock offset here ([rememberDockSourceScrollState], [rememberDockSourceLazyListState]).
+ */
+@Stable
+class DockScrollSlot {
+    // Newest last: a tab or sheet that registers over the page wins while it is shown, and the page's own
+    // scroller is used again when it goes away.
+    private val sources = mutableStateListOf<() -> Float>()
+
+    /** The newest registered scroller's dock offset in dp, or null when no scroller is registered. */
+    val source: (() -> Float)? get() = sources.lastOrNull()
+
+    internal fun register(offset: () -> Float) { sources += offset }
+    internal fun unregister(offset: () -> Float) { sources.remove(offset) }
+}
+
+/** The [DockScrollSlot] of the nearest docking frame, or null outside one. */
+val LocalDockScrollSlot = staticCompositionLocalOf<DockScrollSlot?> { null }
+
+@Composable
+private fun RegisterDockSource(offset: () -> Float) {
+    val slot = LocalDockScrollSlot.current ?: return
+    DisposableEffect(slot, offset) {
+        slot.register(offset)
+        onDispose { slot.unregister(offset) }
+    }
+}
+
+/** [rememberScrollState] that also gives the nearest [DockScrollSlot] its dock offset (no-op outside a frame). */
+@Composable
+fun rememberDockSourceScrollState(): ScrollState {
+    val state = rememberScrollState()
+    RegisterDockSource(rememberDockOffset(state))
+    return state
+}
+
+/** [rememberLazyListState] that also gives the nearest [DockScrollSlot] its dock offset (no-op outside a frame). */
+@Composable
+fun rememberDockSourceLazyListState(): LazyListState {
+    val state = rememberLazyListState()
+    RegisterDockSource(rememberDockOffset(state))
+    return state
 }
 
 /**
