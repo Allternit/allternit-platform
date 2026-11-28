@@ -4,11 +4,7 @@ import resumeNow from './commands/resume-now/index.js'
 import keepGoing from './commands/keep-going/index.js'
 import answer from './commands/answer/index.js'
 import image from './commands/image/index.js'
-import autofixPr from './commands/autofix-pr/index.js'
-import backfillSessions from './commands/backfill-sessions/index.js'
 import btw from './commands/btw/index.js'
-import goodClaude from './commands/good-claude/index.js'
-import issue from './commands/issue/index.js'
 import feedback from './commands/feedback/index.js'
 import testcase from './commands/testcase/index.js'
 import clear from './commands/clear/index.js'
@@ -34,7 +30,6 @@ import factory from './commands/factory/index.js'
 import board from './commands/board/index.js'
 import sessions from './commands/sessions/index.js'
 import diff from './commands/diff/index.js'
-import ctx_viz from './commands/ctx_viz/index.js'
 import doctor from './commands/doctor/index.js'
 import memory from './commands/memory/index.js'
 import knowledge from './commands/knowledge/index.js'
@@ -48,17 +43,14 @@ import keybindings from './commands/keybindings/index.js'
 import login from './commands/login/index.js'
 import logout from './commands/logout/index.js'
 import installGitHubApp from './commands/install-github-app/index.js'
-import installSlackApp from './commands/install-slack-app/index.js'
-import breakCache from './commands/break-cache/index.js'
 import mcp from './commands/mcp/index.js'
 import mobile from './commands/mobile/index.js'
-import onboarding from './commands/onboarding/index.js'
 import pr_comments from './commands/pr_comments/index.js'
 import releaseNotes from './commands/release-notes/index.js'
 import rename from './commands/rename/index.js'
 import resume from './commands/resume/index.js'
 import native from './commands/native/index.js'
-import review, { ultrareview } from './commands/review.js'
+import review from './commands/review.js'
 import session from './commands/session/index.js'
 import edit from './commands/edit/index.js'
 import share from './commands/share/index.js'
@@ -71,18 +63,9 @@ import { computers, decisions, pr, projects, routines, sleep } from './commands/
 import live from './commands/live/index.js'
 import find from './commands/find/index.js'
 import grep from './commands/grep/index.js'
-import cowork from './commands/cowork/index.js'
-import coworkProject from './commands/cowork-project/index.js'
 import artifact from './commands/artifact/index.js'
 import swarm from './commands/swarm/index.js'
 import mission from './commands/mission/index.js'
-import ontology from './commands/ontology/index.js'
-import directive from './commands/directive/index.js'
-import gc from './commands/gc/index.js'
-import multimodal from './commands/multimodal/index.js'
-import purpose from './commands/purpose/index.js'
-import receipts from './commands/receipts/index.js'
-import security from './commands/security/index.js'
 
 function safeRequire(path: string) {
   try {
@@ -100,7 +83,6 @@ const agentsPlatform =
     : null
 /* eslint-enable @typescript-eslint/no-require-imports */
 import securityReview from './commands/security-review.js'
-import bughunter from './commands/bughunter/index.js'
 import terminalSetup from './commands/terminalSetup/index.js'
 import usage from './commands/usage/index.js'
 import theme from './commands/theme/index.js'
@@ -109,41 +91,9 @@ import voice from './commands/voice/index.js'
 import { feature } from 'bun:bundle'
 // Dead code elimination: conditional imports
 /* eslint-disable @typescript-eslint/no-require-imports */
-const proactive =
-  feature('PROACTIVE') || feature('KAIROS')
-    ? safeRequire('./commands/proactive.js')?.default
-    : null
-const briefCommand =
-  feature('KAIROS') || feature('KAIROS_BRIEF')
-    ? safeRequire('./commands/brief.js')?.default
-    : null
-const assistantCommand = feature('KAIROS')
-  ? safeRequire('./commands/assistant/index.js')?.default
-  : null
-const bridge = feature('BRIDGE_MODE')
-  ? safeRequire('./commands/bridge/index.js')?.default
-  : null
-const remoteControlServerCommand =
-  feature('DAEMON') && feature('BRIDGE_MODE')
-    ? safeRequire('./commands/remoteControlServer/index.js')?.default
-    : null
-
-const forceSnip = feature('HISTORY_SNIP')
-  ? safeRequire('./commands/force-snip.js')?.default
-  : null
-const webCmd = feature('CCR_REMOTE_SETUP')
-  ? safeRequire('./commands/remote-setup/index.js')?.default
-  : null
 const clearSkillIndexCache = feature('EXPERIMENTAL_SKILL_SEARCH')
   ? safeRequire('./services/skillSearch/localSearch.js')?.clearSkillIndexCache
   : null
-const subscribePr = feature('KAIROS_GITHUB_WEBHOOKS')
-  ? safeRequire('./commands/subscribe-pr.js')?.default
-  : null
-const ultraplan = feature('ULTRAPLAN')
-  ? safeRequire('./commands/ultraplan.js')?.default
-  : null
-const torch = feature('TORCH') ? safeRequire('./commands/torch.js')?.default : null
 const forkCmd = feature('FORK_SUBAGENT')
   ? require('./commands/fork/index.js').default
   : null
@@ -152,8 +102,6 @@ const pet = feature('PET')
   : null
 /* eslint-enable @typescript-eslint/no-require-imports */
 import think from './commands/think/index.js'
-import thinkback from './commands/thinkback/index.js'
-import thinkbackPlay from './commands/thinkback-play/index.js'
 import permissions from './commands/permissions/index.js'
 import plan from './commands/plan/index.js'
 import fast from './commands/fast/index.js'
@@ -167,16 +115,7 @@ import plugin from './commands/plugin/index.js'
 import reloadPlugins from './commands/reload-plugins/index.js'
 import rewind from './commands/rewind/index.js'
 import heapDump from './commands/heapdump/index.js'
-import mockLimits from './commands/mock-limits/index.js'
-import bridgeKick from './commands/bridge-kick.js'
 import version from './commands/version.js'
-import summary from './commands/summary/index.js'
-import {
-  resetLimits,
-  resetLimitsNonInteractive,
-} from './commands/reset-limits/index.js'
-import antTrace from './commands/ant-trace/index.js'
-import perfIssue from './commands/perf-issue/index.js'
 import sandboxToggle from './commands/sandbox-toggle/index.js'
 import alwaysApprove from './commands/always-approve/index.js'
 import autoCommand from './commands/auto/index.js'
@@ -191,9 +130,6 @@ import queue from './commands/queue/index.js'
 import transcript from './commands/transcript/index.js'
 import multiline from './commands/multiline/index.js'
 import cd from './commands/cd/index.js'
-import chrome from './commands/chrome/index.js'
-import stickers from './commands/stickers/index.js'
-import { isEnvTruthy } from './utils/envUtils.js'
 import advisor from './commands/advisor.js'
 import { logError } from './utils/log.js'
 import { toError } from './utils/errors.js'
@@ -214,40 +150,19 @@ import {
 import memoize from 'lodash-es/memoize.js'
 import { isUsing3PServices, isClaudeAISubscriber } from './utils/auth.js'
 import { isFirstPartyAllternitBaseUrl } from './utils/model/providers.js'
-import env from './commands/env/index.js'
 import exit from './commands/exit/index.js'
 import exportCommand from './commands/export/index.js'
 import model from './commands/model/index.js'
 import runtimeCommand from './commands/runtime/index.js'
 import tag from './commands/tag/index.js'
-import outputStyle from './commands/output-style/index.js'
 import remoteEnv from './commands/remote-env/index.js'
-import upgrade from './commands/upgrade/index.js'
 import {
   extraUsage,
   extraUsageNonInteractive,
 } from './commands/extra-usage/index.js'
-import rateLimitOptions from './commands/rate-limit-options/index.js'
 import statusline from './commands/statusline.js'
 import effort from './commands/effort/index.js'
 import stats from './commands/stats/index.js'
-// insights.ts is 113KB (3200 lines, includes diffLines/html rendering). Lazy
-// shim defers the heavy module until /insights is actually invoked.
-const usageReport: Command = {
-  type: 'prompt',
-  name: 'insights',
-  description: 'Generate a report analyzing your Gizzi Code sessions',
-  contentLength: 0,
-  progressMessage: 'analyzing your sessions',
-  source: 'builtin',
-  async getPromptForCommand(args, context) {
-    const real = (await import('./commands/insights.js')).default
-    if (real.type !== 'prompt') throw new Error('unreachable')
-    return real.getPromptForCommand(args, context)
-  },
-}
-import oauthRefresh from './commands/oauth-refresh/index.js'
-import debugToolCall from './commands/debug-tool-call/index.js'
 import {
   getCommandArgumentHint,
   getCommandSourceTag,
@@ -272,55 +187,12 @@ export { getCommandName, isCommandEnabled } from './types/command.js'
 
 // Commands that get eliminated from the external build
 export const INTERNAL_ONLY_COMMANDS = [
-  backfillSessions,
-  breakCache,
-  bughunter,
   commit,
   commitPushPr,
-  ctx_viz,
-  goodClaude,
-  issue,
   initVerifiers,
-  ...(forceSnip ? [forceSnip] : []),
-  mockLimits,
-  bridgeKick,
   version,
-  ...(ultraplan ? [ultraplan] : []),
-  ...(subscribePr ? [subscribePr] : []),
-  resetLimits,
-  resetLimitsNonInteractive,
-  onboarding,
-  summary,
-  antTrace,
-  perfIssue,
-  env,
-  oauthRefresh,
-  debugToolCall,
   agentsPlatform,
-  autofixPr,
 ].filter(Boolean)
-
-// Commands that are not finished in Gizzi. They call allternit-api routes
-// without the user's token (401) or routes that do not exist, or send
-// people to Claude Code's sticker shop. (/swarm is real now: it starts a
-// Factory swarm, so it stays visible.) Hidden and disabled until they work;
-// GIZZI_EXPERIMENTAL_COMMANDS=1 turns them back on for development.
-const UNFINISHED_COMMANDS = (): Command[] => [
-  cowork,
-  coworkProject,
-  ontology,
-  directive,
-  gc,
-  multimodal,
-  purpose,
-  receipts,
-  security,
-]
-
-function hideUnlessExperimental(cmd: Command): Command {
-  if (isEnvTruthy(process.env.GIZZI_EXPERIMENTAL_COMMANDS)) return cmd
-  return { ...cmd, isHidden: true, isEnabled: () => false }
-}
 
 // Declared as a function so that we don't run this until getCommands is called,
 // since underlying functions read from config, which can't be read at module initialization time
@@ -335,7 +207,6 @@ const COMMANDS = memoize((): Command[] => [
   btw,
   fix,
   cd,
-  chrome,
   clear,
   color,
   compact,
@@ -344,7 +215,6 @@ const COMMANDS = memoize((): Command[] => [
   desktop,
   remote,
   design,
-  ...UNFINISHED_COMMANDS().map(hideUnlessExperimental),
   context,
   contextNonInteractive,
   cost,
@@ -385,7 +255,6 @@ const COMMANDS = memoize((): Command[] => [
   projects,
   live,
   installGitHubApp,
-  installSlackApp,
   mcp,
   memory,
   knowledge,
@@ -395,7 +264,6 @@ const COMMANDS = memoize((): Command[] => [
   mobile,
   model,
   runtimeCommand,
-  outputStyle,
   remoteEnv,
   plugin,
   pr_comments,
@@ -412,7 +280,6 @@ const COMMANDS = memoize((): Command[] => [
   stats,
   status,
   statusline,
-  hideUnlessExperimental(stickers),
   tag,
   theme,
   timestamps,
@@ -420,18 +287,13 @@ const COMMANDS = memoize((): Command[] => [
   feedback,
   testcase,
   review,
-  ultrareview,
   rewind,
   securityReview,
   terminalSetup,
-  upgrade,
   extraUsage,
   extraUsageNonInteractive,
-  rateLimitOptions,
   usage,
-  usageReport,
   vim,
-  ...(webCmd ? [webCmd] : []),
   ...(forkCmd ? [forkCmd] : []),
   ...(pet ? [pet] : []),
   resumeNow,
@@ -440,15 +302,8 @@ const COMMANDS = memoize((): Command[] => [
   image,
   share,
   edit,
-  ...(proactive ? [proactive] : []),
-  ...(briefCommand ? [briefCommand] : []),
-  ...(assistantCommand ? [assistantCommand] : []),
-  ...(bridge ? [bridge] : []),
-  ...(remoteControlServerCommand ? [remoteControlServerCommand] : []),
   voice,
   think,
-  thinkback,
-  thinkbackPlay,
   permissions,
   plan,
   viewPlan,
@@ -459,7 +314,6 @@ const COMMANDS = memoize((): Command[] => [
   ...(!isUsing3PServices() ? [logout, login()] : []),
   passes,
   tasks,
-  ...(torch ? [torch] : []),
   ...(process.env.USER_TYPE === 'ant' && !process.env.IS_DEMO
     ? INTERNAL_ONLY_COMMANDS
     : []),
@@ -741,7 +595,6 @@ export const REMOTE_SAFE_COMMANDS: Set<Command> = new Set([
   plan, // Plan mode toggle
   keybindings, // Keybinding management
   statusline, // Status line toggle
-  stickers, // Stickers
   mobile, // Mobile QR code
 ])
 
@@ -762,7 +615,6 @@ export const BRIDGE_SAFE_COMMANDS: Set<Command> = new Set(
     compact, // Shrink context — useful mid-session from a phone
     clear, // Wipe transcript
     cost, // Show session cost
-    summary, // Summarize conversation
     releaseNotes, // Show changelog
     files, // Browse the Files drive (read-only, never wakes a computer)
     remember, // Append a memory note

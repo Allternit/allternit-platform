@@ -33,7 +33,7 @@ export function getUpsellMessage({
     return 'Opening your options\u2026';
   }
   if (!isTeamOrEnterprise && !isExtraUsageCommandEnabled) {
-    return '/upgrade to increase your usage limit.';
+    return null;
   }
   if (isTeamOrEnterprise) {
     if (!isExtraUsageCommandEnabled) return null;
@@ -42,7 +42,7 @@ export function getUpsellMessage({
     }
     return '/extra-usage to request more usage from your admin.';
   }
-  return '/upgrade or /extra-usage to finish what you\u2019re working on.';
+  return '/extra-usage to finish what you\u2019re working on.';
 }
 type RateLimitMessageProps = {
   text: string;
