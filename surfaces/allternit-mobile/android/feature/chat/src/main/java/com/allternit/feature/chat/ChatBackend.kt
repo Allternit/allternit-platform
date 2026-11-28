@@ -45,6 +45,9 @@ class ChatBackend(
     private val stream = AgentChatStream(okHttp, api, json)
     val relay = RuntimeRelay(okHttp, config, context)
 
+    /** No-computer turns straight to cloud-api `/v1/chat/completions` (Allternit Cloud and plan models). */
+    val personChat = PersonChatClient(okHttp) { config.cloudBaseUrl }
+
     /** Public fetches (GitHub raw files, link-preview images): never carries the bearer. */
     internal val publicHttp: OkHttpClient by lazy {
         OkHttpClient.Builder().connectTimeout(15, TimeUnit.SECONDS).readTimeout(30, TimeUnit.SECONDS).build()

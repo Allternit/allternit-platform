@@ -100,6 +100,13 @@ class ChatViewModel(
     var sessionContext = SessionContext()
 
     /**
+     * Whether the computer's model catalog lists this id (iOS ModelStore.routesDirect). The shell sets it; null
+     * (bots, office) means unknown, and an Allternit Cloud model then goes to cloud-api only when the relay
+     * finds no computer.
+     */
+    var computerListsModel: ((String) -> Boolean)? = null
+
+    /**
      * Start anywhere (step 20): the computer this thread is bound to, from `metadata.startBinding`. Engine
      * threads send every turn to that computer in that folder; terminal threads show the CLI's terminal.
      */
@@ -461,6 +468,12 @@ class ChatViewModel(
         val index = messages.indexOfFirst { it.id == messageId }
         if (index < 0) return
         val sessionId = currentSessionId
+        // A no-computer chat lives on this phone only: cut the feed back to that message and send the new text (iOS).
+        if (sessionId == null && binding == null && (PersonModels.isPersonOnly(request.runtimeModelId) || PersonModels.cloudAlias(request.runtimeModelId) != null)) {
+            messages = messages.subList(0, index)
+            send(request)
+            return
+        }
         if (sessionId == null) {
             transientError = "Couldn't edit this message: the chat isn't saved yet."
             return
@@ -551,6 +564,15 @@ class ChatViewModel(
             var failed = false
             isCreatingSession = currentSessionId == null
             try {
+                // No computer needed (iOS startPersonStream): plan models always, Allternit Cloud models when the
+                // chat is not on a computer and no computer serves the model. Never throws NoComputer for them.
+                val route = SendRoutes.route(runtimeModelId, chatOnComputer = currentSessionId != null || binding != null, computerLists = runtimeModelId?.let { computerListsModel?.invoke(it) })
+                val direct = route == SendRoute.Person || (route == SendRoute.CheckComputer && backend.relay.resolve().let { it == RelayPick.NoComputer || (it is RelayPick.Failed && it.gate) })
+                if (direct && runtimeModelId != null) {
+                    isCreatingSession = false
+                    runPersonTurn(runtimeModelId, text, hasAttachments = staged.isNotEmpty() || !preparedRefs.isNullOrEmpty(), assistantId)
+                    return@launch
+                }
                 // Upload staged files first. A failed upload fails the send: never drop the files
                 // and send a text-only message the person didn't ask for.
                 val refs = preparedRefs?.toMutableList() ?: mutableListOf()
@@ -679,6 +701,30 @@ class ChatViewModel(
                 }
             }
         }
+    }
+
+    /**
+     * One no-computer turn to cloud-api (iOS startPersonStream): history replayed, no session, no attachments.
+     * A refusal lands under the reply in plain words; a 402 card opens Cloud credits ([ChatScreen]).
+     * Network failures go to [startStream]'s catch like any send.
+     */
+    private suspend fun runPersonTurn(modelId: String, text: String, hasAttachments: Boolean, assistantId: String) {
+        val vendor = PersonModels.vendorName(modelId)
+        lastSent = LastSent(text, modelId, null, emptyList(), null)
+        requestStartedAt = System.currentTimeMillis()
+        firstDeltaAt = null
+        try {
+            if (hasAttachments) throw PersonChatRefusal("text_only", null, vendor)
+            // No tools here: the web search / research markers mean nothing to the vendor.
+            val history = PersonChatClient.history(messages.filter { it.id != assistantId }, strippedText(text))
+            backend.personChat.stream(modelId, history).collect { e ->
+                if (e is PersonChatEvent.Delta) apply(ChatStreamEvent.TextDelta(null, null, e.text), assistantId)
+            }
+        } catch (r: PersonChatRefusal) {
+            flushPending()
+            update(assistantId) { it.copy(error = r.card()) }
+        }
+        finishStreaming(assistantId)
     }
 
     private class GateException(val reason: ComputeGateReason) : Exception()
