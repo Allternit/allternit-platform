@@ -6,6 +6,7 @@ import android.content.Context
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -77,7 +78,19 @@ private fun toneColor(tone: TerminalPreview.Tone): Color = when (tone) {
  * agent's input box, monospace and clipped. A tap opens that terminal.
  */
 @Composable
-internal fun TerminalPreviewRow(terminal: TerminalListItem, layout: TerminalPreview.Layout, onOpen: () -> Unit) {
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
+internal fun TerminalPreviewRow(
+    terminal: TerminalListItem,
+    layout: TerminalPreview.Layout,
+    /** Grid and Deck draw it as a card, so the row's own side padding goes. */
+    padded: Boolean = true,
+    /** Long-press arms [onDelete]: a "Hold to end and delete" strip opens under the row. Null = no delete. */
+    onDelete: (() -> Unit)? = null,
+    armed: Boolean = false,
+    onArm: () -> Unit = {},
+    onDisarm: () -> Unit = {},
+    onOpen: () -> Unit,
+) {
     val c = AllternitTheme.colors
     val view = LocalView.current
     val status = TerminalPreview.status(terminal)
@@ -89,9 +102,14 @@ internal fun TerminalPreviewRow(terminal: TerminalListItem, layout: TerminalPrev
     Column(
         Modifier.fillMaxWidth()
             .testTag("codeTerminalPreview-${terminal.sessionId}")
-            .clickable(role = Role.Button, onClickLabel = "Open this terminal") { Haptics.perform(view, Haptics.Kind.Tap); onOpen() }
+            .combinedClickable(
+                role = Role.Button,
+                onClickLabel = "Open this terminal",
+                onLongClickLabel = if (onDelete != null) "Delete this terminal" else null,
+                onLongClick = if (onDelete != null) ({ Haptics.perform(view, Haptics.Kind.Tap); onArm() }) else null,
+            ) { Haptics.perform(view, Haptics.Kind.Tap); if (armed) onDisarm() else onOpen() }
             .semantics(mergeDescendants = true) { contentDescription = label }
-            .padding(horizontal = 16.dp, vertical = 8.dp),
+            .padding(horizontal = if (padded) 16.dp else 0.dp, vertical = 8.dp),
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -117,6 +135,7 @@ internal fun TerminalPreviewRow(terminal: TerminalListItem, layout: TerminalPrev
                 }
             }
         }
+        if (armed && onDelete != null) DeleteStrip("Hold to end and delete", "codeTerminalDelete-${terminal.sessionId}", onHeld = onDelete, onCancel = onDisarm)
     }
 }
 
