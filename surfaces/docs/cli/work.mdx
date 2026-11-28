@@ -47,6 +47,29 @@ Your routines (Desktop's **Automation Tasks**) with when each runs next, when it
 Routines that live on your cloud computer are listed by that computer's runtime. In the terminal, `/routines` lists the ones on this machine's runtime.
 </Note>
 
+## Sleep
+
+Allternit Sleep tidies your memory in the background. The Sleep tab of the work views shows whether it is on, the last run, the next run and the last report. Press `n` to run a cycle now or `p` to pause or resume it; each asks `y` to confirm first.
+
+The same actions are a command:
+
+```bash
+gizzi sleep status
+gizzi sleep now
+gizzi sleep pause
+gizzi sleep resume
+gizzi sleep report --json
+```
+
+```text
+Sleep is on
+Last run:  2h ago
+Next run:  when memory debt builds (debt 3.0)
+Report:    Merged 3 notes
+```
+
+On a runtime that is too old to have Sleep, the command says "this runtime has no Sleep yet". When you are signed out it asks you to run `gizzi login`.
+
 ## Computers
 
 ```bash
