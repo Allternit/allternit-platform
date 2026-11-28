@@ -1,0 +1,18 @@
+[package]
+name = "allternit-init"
+description = "AllternitOS PID 1 (Linux only)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+name = "allternit_init"
+path = "src/lib.rs"
+
+[[bin]]
+name = "init"
+path = "src/main.rs"
+
+[dependencies]
+libc = "0.2"

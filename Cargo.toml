@@ -1,6 +1,9 @@
 [workspace]
 resolver = "2"
 
+# AllternitOS boot image is its own standalone workspace (os/Cargo.toml).
+exclude = ["os"]
+
 members = [
     "services/orchestration/platform-orchestration-service",
     "cmd/allternit-api",
