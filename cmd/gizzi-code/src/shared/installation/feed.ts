@@ -267,7 +267,7 @@ export namespace ReleaseFeed {
 
   /** Record a check's outcome so doctor can show "last check" without a network call. */
   export function recordCheck(result: FetchResult, now: Date, stateDir?: string): State {
-    if (!result.ok) {
+    if (result.ok === false) {
       return writeState(
         { lastCheckAt: now.toISOString(), lastCheckResult: result.reason, lastCheckDetail: result.detail },
         stateDir,

@@ -355,7 +355,7 @@ export namespace Updater {
     const kind = archiveKind(input.artifact.url)
     const download = path.join(dir, kind === "raw" ? `download${exe}` : `download.${kind}`)
     const dl = await downloadVerified(input.artifact, download, input.fetch ?? fetch)
-    if (!dl.ok) {
+    if (dl.ok === false) {
       fs.rmSync(dir, { recursive: true, force: true })
       return dl
     }
@@ -570,7 +570,7 @@ export namespace Updater {
     const st = ReleaseFeed.recordCheck(result, now(), opts.stateDir)
     const after = { ...b, lastCheckAt: st.lastCheckAt, highlights: st.highlights ?? [], notesUrl: st.notesUrl }
 
-    if (!result.ok) {
+    if (result.ok === false) {
       if (result.reason === "feed key not set") {
         return setStatus({ ...after, state: "key-missing", reason: result.reason, message: "Updates are off: feed key not set." })
       }
@@ -635,7 +635,7 @@ export namespace Updater {
       if (saved) dropStaged(opts.stateDir)
       setStatus({ ...withFeed, state: "downloading", message: `Downloading Gizzi ${feed.version}…` })
       const result = await stageArtifact({ artifact, version: feed.version, target, fetch: opts.fetch, now })
-      if (!result.ok) {
+      if (result.ok === false) {
         return setStatus({ ...withFeed, state: "error", reason: result.reason, message: `Update refused: ${result.reason}.` })
       }
       ReleaseFeed.writeState({ staged: result.staged }, opts.stateDir)

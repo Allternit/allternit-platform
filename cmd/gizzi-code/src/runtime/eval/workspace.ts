@@ -7,7 +7,7 @@ import { Config } from "@/runtime/context/config/config"
 import type { MessageV2 } from "@/runtime/session/message-v2"
 
 export type WorkspaceRef =
-  | { kind: "archive"; path: "workspace.tar.gz"; bytes: number; snapshot: string }
+  | { kind: "archive"; path: string; bytes: number; snapshot: string }
   | { kind: "none"; reason: "not_git" | "snapshot_off" | "pruned" | "too_large" | "no_project" }
 
 const ARCHIVE = "workspace.tar.gz" as const

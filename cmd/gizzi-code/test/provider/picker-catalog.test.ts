@@ -68,7 +68,7 @@ describe("fetchPickerCatalog", () => {
       fetch: (async (_u: unknown, init?: RequestInit) => {
         seen.push((init?.headers ?? {}) as Record<string, string>)
         return json(fixture("funded"))
-      }) as typeof fetch,
+      }) as unknown as typeof fetch,
     })
     expect(first.status === "ok" && first.from).toBe("live")
     expect(seen[0]?.Authorization).toBe("Bearer tok")
@@ -79,7 +79,7 @@ describe("fetchPickerCatalog", () => {
       now: 2000,
       fetch: (async () => {
         throw new Error("no network inside the TTL")
-      }) as typeof fetch,
+      }) as unknown as typeof fetch,
     })
     expect(fresh.status === "ok" && fresh.from).toBe("cache")
 
@@ -90,7 +90,7 @@ describe("fetchPickerCatalog", () => {
       fetch: (async (_u: unknown, init?: RequestInit) => {
         seen.push((init?.headers ?? {}) as Record<string, string>)
         return new Response(null, { status: 304 })
-      }) as typeof fetch,
+      }) as unknown as typeof fetch,
     })
     expect(seen[1]?.["If-None-Match"]).toBe('"v1"')
     expect(revalidated.status === "ok" && revalidated.from).toBe("cache")
@@ -100,8 +100,8 @@ describe("fetchPickerCatalog", () => {
   test("the cache belongs to one identity: a signed-out cache is not served to a signed-in user", async () => {
     const cacheFile = tmpCache()
     const base = { cacheFile, origin: "https://cloud.test" }
-    await fetchPickerCatalog({ ...base, token: null, now: 1000, fetch: (async () => json(fixture("signed-out"))) as typeof fetch })
-    const signedIn = await fetchPickerCatalog({ ...base, token: "tok", now: 2000, fetch: (async () => json(fixture("funded"))) as typeof fetch })
+    await fetchPickerCatalog({ ...base, token: null, now: 1000, fetch: (async () => json(fixture("signed-out"))) as unknown as typeof fetch })
+    const signedIn = await fetchPickerCatalog({ ...base, token: "tok", now: 2000, fetch: (async () => json(fixture("funded"))) as unknown as typeof fetch })
     expect(signedIn.status === "ok" && signedIn.from).toBe("live")
     expect(signedIn.status === "ok" && signedIn.catalog.cloudModels[0]?.access.state).toBe("ok")
   })
@@ -111,9 +111,9 @@ describe("fetchPickerCatalog", () => {
     const base = { cacheFile, origin: "https://cloud.test", token: "tok" }
     const down = (async () => {
       throw new Error("offline")
-    }) as typeof fetch
+    }) as unknown as typeof fetch
     expect((await fetchPickerCatalog({ ...base, now: 1000, fetch: down })).status).toBe("unavailable")
-    await fetchPickerCatalog({ ...base, now: 1000, fetch: (async () => json(fixture("funded"))) as typeof fetch })
+    await fetchPickerCatalog({ ...base, now: 1000, fetch: (async () => json(fixture("funded"))) as unknown as typeof fetch })
     const stale = await fetchPickerCatalog({ ...base, now: 1000 + PICKER_CATALOG_TTL_MS + 1, fetch: down })
     expect(stale.status === "ok" && stale.from).toBe("stale-cache")
   })
@@ -123,7 +123,7 @@ describe("fetchPickerCatalog", () => {
       cacheFile: tmpCache(),
       origin: "https://cloud.test",
       token: null,
-      fetch: (async () => new Response("nope", { status: 404 })) as typeof fetch,
+      fetch: (async () => new Response("nope", { status: 404 })) as unknown as typeof fetch,
     })
     expect(result.status).toBe("unsupported")
   })
@@ -135,7 +135,7 @@ describe("fetchPickerCatalog", () => {
       cacheFile,
       origin: "https://cloud.test",
       token: null,
-      fetch: (async () => json({ hello: "world" })) as typeof fetch,
+      fetch: (async () => json({ hello: "world" })) as unknown as typeof fetch,
     })
     expect(result.status).toBe("unavailable")
   })
