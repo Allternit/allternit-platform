@@ -1097,6 +1097,7 @@ async fn main() {
             state.clone(),
             allternit_api::placement::passthrough,
         )))
+        .merge(allternit_api::agent_eval_routes::agent_eval_router())
         .merge(allternit_api::card_meta::card_meta_router())
         .merge(allternit_api::placement::placement_router())
         .merge(allternit_api::teleport_routes::teleport_router())

@@ -127,6 +127,231 @@ paths:
                 type: array
                 items: { $ref: "#/components/schemas/AgentSessionMessage" }
         default: { $ref: "#/components/responses/Error" }
+  /agent-evals/cases:
+    get:
+      operationId: listAgentEvalCases
+      summary: "List saved eval cases (`?session_id=&suite=`)"
+      x-base: api
+      x-handler: cmd/allternit-api/src/agent_eval_routes.rs list_cases
+      tags: [Evals]
+      parameters:
+        - name: session_id
+          in: query
+          required: false
+          schema: { type: string }
+        - name: suite
+          in: query
+          required: false
+          schema: { type: string }
+      responses:
+        "200":
+          description: "`{cases}`."
+          content:
+            application/json:
+              schema: { type: object }
+        default: { $ref: "#/components/responses/Error" }
+    post:
+      operationId: createAgentEvalCase
+      summary: Save a chat session as an eval case
+      x-base: api
+      x-handler: cmd/allternit-api/src/agent_eval_routes.rs create_case
+      tags: [Evals]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, description: "`{session_id, label, note?, through_message_id?, quick_check?, suite?}`" }
+      responses:
+        "201":
+          description: "`{case, self_test, needs_check}`."
+          content:
+            application/json:
+              schema: { type: object }
+        "404":
+          description: "`session_not_found`."
+          content:
+            application/json:
+              schema: { type: object }
+        "409":
+          description: "`case_limit`."
+          content:
+            application/json:
+              schema: { type: object }
+        "422":
+          description: "`empty_session`."
+          content:
+            application/json:
+              schema: { type: object }
+        default: { $ref: "#/components/responses/Error" }
+  /agent-evals/cases/{id}:
+    get:
+      operationId: getAgentEvalCase
+      summary: One full eval case
+      x-base: api
+      x-handler: cmd/allternit-api/src/agent_eval_routes.rs get_case
+      tags: [Evals]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: "`{case}`."
+          content:
+            application/json:
+              schema: { type: object }
+        "404":
+          description: Not found.
+          content:
+            application/json:
+              schema: { type: object }
+        default: { $ref: "#/components/responses/Error" }
+    delete:
+      operationId: deleteAgentEvalCase
+      summary: Delete an eval case
+      x-base: api
+      x-handler: cmd/allternit-api/src/agent_eval_routes.rs delete_case
+      tags: [Evals]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "204":
+          description: Deleted.
+        "404":
+          description: Not found.
+          content:
+            application/json:
+              schema: { type: object }
+        default: { $ref: "#/components/responses/Error" }
+  /agent-evals/suites:
+    get:
+      operationId: listAgentEvalSuites
+      summary: List eval suites with their last run
+      x-base: api
+      x-handler: cmd/allternit-api/src/agent_eval_routes.rs list_suites
+      tags: [Evals]
+      responses:
+        "200":
+          description: "`{suites}`."
+          content:
+            application/json:
+              schema: { type: object }
+        default: { $ref: "#/components/responses/Error" }
+  /agent-evals/runs/estimate:
+    post:
+      operationId: estimateAgentEvalRun
+      summary: Estimate what a live run costs before starting it
+      x-base: api
+      x-handler: cmd/allternit-api/src/agent_eval_routes.rs estimate_run
+      tags: [Evals]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, description: "`{suite, case_ids?, k?, model?}`" }
+      responses:
+        "200":
+          description: The estimate; its `estimate_id` is valid for 10 minutes.
+          content:
+            application/json:
+              schema: { type: object }
+        default: { $ref: "#/components/responses/Error" }
+  /agent-evals/runs:
+    get:
+      operationId: listAgentEvalRuns
+      summary: "List eval runs, newest first (`?suite=`)"
+      x-base: api
+      x-handler: cmd/allternit-api/src/agent_eval_routes.rs list_runs
+      tags: [Evals]
+      parameters:
+        - name: suite
+          in: query
+          required: false
+          schema: { type: string }
+      responses:
+        "200":
+          description: "`{runs}`."
+          content:
+            application/json:
+              schema: { type: object }
+        default: { $ref: "#/components/responses/Error" }
+    post:
+      operationId: createAgentEvalRun
+      summary: Start an eval run (replay or live)
+      x-base: api
+      x-handler: cmd/allternit-api/src/agent_eval_routes.rs create_run
+      tags: [Evals]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, description: "`{suite, mode, case_ids?, k?, model?, estimate_id?, fraction?, seed?}`" }
+      responses:
+        "200":
+          description: "Replay: `{run_id, report}`."
+          content:
+            application/json:
+              schema: { type: object }
+        "202":
+          description: "Live: `{run_id}`."
+          content:
+            application/json:
+              schema: { type: object }
+        "409":
+          description: "`estimate_required`: a live run needs a fresh estimate."
+          content:
+            application/json:
+              schema: { type: object }
+        default: { $ref: "#/components/responses/Error" }
+  /agent-evals/runs/{id}:
+    get:
+      operationId: getAgentEvalRun
+      summary: State, progress and report of one run
+      x-base: api
+      x-handler: cmd/allternit-api/src/agent_eval_routes.rs get_run
+      tags: [Evals]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: The run.
+          content:
+            application/json:
+              schema: { type: object }
+        "404":
+          description: Not found.
+          content:
+            application/json:
+              schema: { type: object }
+        default: { $ref: "#/components/responses/Error" }
+  /agent-evals/runs/{id}/cancel:
+    post:
+      operationId: cancelAgentEvalRun
+      summary: Cancel a running eval
+      x-base: api
+      x-handler: cmd/allternit-api/src/agent_eval_routes.rs cancel_run
+      tags: [Evals]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "202":
+          description: Cancel requested.
+        "404":
+          description: Not found.
+          content:
+            application/json:
+              schema: { type: object }
+        default: { $ref: "#/components/responses/Error" }
   /models:
     get:
       operationId: listModels
