@@ -6,6 +6,8 @@ import UIKit
 /// computer's screen, the paired computers (MachinesPanel `list`), linked
 /// phones, cloud computer backups, workflows and operator keys.
 struct ACIComputersPane: View {
+    /// Opens the drawer from the ☰ in the nav bar.
+    var onMenu: () -> Void = {}
     @ObservedObject private var relay = RuntimeRelayStore.shared
     @ObservedObject private var files = FilesDrive.shared
     @State private var isPairOpen = false
@@ -25,10 +27,9 @@ struct ACIComputersPane: View {
     }
 
     var body: some View {
-        ACIDockReader { dock in
-            ACIDockingScroll(title: "Computers", dock: dock) {
+        NavigationStack {
+            DockingTitleScrollView(title: "Computers") {
                 VStack(alignment: .leading, spacing: 0) {
-                    ACIViewHeader(title: "Computers", dock: dock)
                     GlassPill(title: "Add a computer", systemImage: "plus") {
                         withAnimation(PolishTokens.sheet) { isPairOpen = true }
                     }
@@ -48,6 +49,11 @@ struct ACIComputersPane: View {
                 .padding(.bottom, 32)
             }
             .refreshable { await relay.refresh() }
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    PhoneMenuButton(round: true, onOpen: onMenu)
+                }
+            }
         }
         .task { await relay.refresh() }
         .task { consoleOn = (try? await AccountFlagsClient.shared.string("computers_console")) != nil }

@@ -56,6 +56,9 @@ struct ACITabView: View {
     /// The browser, a run and a chat bring their own top bar.
     private var showsHeader: Bool { nav.tab != .agent || isLanding }
 
+    /// Apps, Computers and Extensions draw their own nav bar (☰ + docking title).
+    private var showsTopHeader: Bool { showsHeader && (nav.tab == .agent) }
+
     private var showPairNudge: Bool {
         relay.availability != .unknown && relay.devices.isEmpty && !pairSeen
             && (nav.tab == .agent || nav.tab == .computers)
@@ -67,7 +70,7 @@ struct ACITabView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            if showsHeader {
+            if showsTopHeader {
                 ACIPhoneHeader(showsWordmark: nav.tab == .agent && isLanding) {
                     isSidebarOpen.toggle()
                 }
@@ -110,9 +113,9 @@ struct ACITabView: View {
                 Group {
                     switch nav.tab {
                     case .agent: agentPane
-                    case .apps: ACIMcpAppsView()
-                    case .computers: ACIComputersPane()
-                    case .extensions: ACIExtensionsView()
+                    case .apps: ACIMcpAppsView(onMenu: { isSidebarOpen.toggle() })
+                    case .computers: ACIComputersPane(onMenu: { isSidebarOpen.toggle() })
+                    case .extensions: ACIExtensionsView(onMenu: { isSidebarOpen.toggle() })
                     }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)

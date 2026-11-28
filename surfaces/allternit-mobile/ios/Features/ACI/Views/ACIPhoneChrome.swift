@@ -39,21 +39,14 @@ struct ACIViewHeader: View {
     var subtitle: String? = nil
     /// `!pb-4` on the compact views, the default `pb-6` elsewhere.
     var bottom: CGFloat = 24
-    /// Opt-in docking (T11): when set, the serif title becomes a block title that
-    /// docks into the ACI phone header's centre. The screen draws it with
-    /// `ACIDockingScroll` around its scroll content.
-    /// Nil keeps the serif title exactly as before.
-    var dock: ACIViewDock? = nil
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            if dock == nil {
-                Text(title)
-                    .font(.system(size: 30, weight: .medium, design: .serif))
-                    .tracking(-0.3)
-                    .foregroundColor(Color("TextPrimary"))
-                    .accessibilityAddTraits(.isHeader)
-            }
+            Text(title)
+                .font(.system(size: 30, weight: .medium, design: .serif))
+                .tracking(-0.3)
+                .foregroundColor(Color("TextPrimary"))
+                .accessibilityAddTraits(.isHeader)
             if let subtitle {
                 Text(subtitle)
                     .font(.system(size: 14))
@@ -63,27 +56,6 @@ struct ACIViewHeader: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.top, 8)
         .padding(.bottom, bottom)
-    }
-}
-
-/// Opt-in docking settings for `ACIViewHeader`. `barCenter` is the y of the ACI
-/// phone header's centre (PhoneHeader is 52 pt tall, so safe-area top + 26).
-struct ACIViewDock: Equatable {
-    var barCenter: CGFloat
-}
-
-/// Wraps an ACI view's scrolling content so its title docks into the ACI phone
-/// header's centre (`.overlay(barCenter:)`). The screen passes the same title it
-/// gives `ACIViewHeader(dock:)` and drops the header's own serif title.
-struct ACIDockingScroll<Content: View>: View {
-    let title: String
-    var description: String?
-    let dock: ACIViewDock
-    @ViewBuilder var content: () -> Content
-
-    var body: some View {
-        DockingTitleScrollView(title: title, description: description,
-                               chrome: .overlay(barCenter: dock.barCenter), content: content)
     }
 }
 

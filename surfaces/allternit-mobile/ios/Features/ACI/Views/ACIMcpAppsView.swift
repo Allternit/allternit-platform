@@ -16,6 +16,8 @@ import UIKit
 /// - `POST /api/mcp/apps` `tools/list` (on the person's computer)
 /// - `GET  miniapps/submissions` (Build › Your apps)
 struct ACIMcpAppsView: View {
+    /// Opens the drawer from the ☰ in the nav bar (or the shelf's own header).
+    var onMenu: () -> Void = {}
     enum Tab: String, CaseIterable {
         case installed, discover, build, shelf
 
@@ -70,6 +72,7 @@ struct ACIMcpAppsView: View {
             if tab == .shelf {
                 // The shelf keeps its own scroll, so it keeps the serif title.
                 VStack(spacing: 0) {
+                    ACIPhoneHeader(onMenu: onMenu)
                     ACIViewHeader(title: "MCP Apps", subtitle: Self.subtitle, bottom: 16)
                         .padding(.horizontal, 16)
                     bar
@@ -77,12 +80,10 @@ struct ACIMcpAppsView: View {
                     AppsShelfView()
                 }
             } else {
-                ACIDockReader { dock in
-                    ACIDockingScroll(title: "MCP Apps", dock: dock) {
+                NavigationStack {
+                    DockingTitleScrollView(title: "MCP Apps", description: Self.subtitle) {
                         // The pinned bar pins at the scroll view's top edge, below the docked title.
                         LazyVStack(alignment: .leading, spacing: 0, pinnedViews: [.sectionHeaders]) {
-                            ACIViewHeader(title: "MCP Apps", subtitle: Self.subtitle, bottom: 16, dock: dock)
-                                .padding(.horizontal, 2)
                             Section {
                                 switch tab {
                                 case .installed: installed
@@ -100,6 +101,11 @@ struct ACIMcpAppsView: View {
                         }
                     }
                     .refreshable { await model.refresh() }
+                    .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    PhoneMenuButton(round: true, onOpen: onMenu)
+                }
+            }
                 }
             }
         }
@@ -480,41 +486,6 @@ struct ACIMcpAppsView: View {
         .frame(height: 32)
         .background(Capsule().fill(isOn ? Color("TextPrimary") : Color("FillNeutral")))
         .fixedSize()
-    }
-}
-
-// MARK: - Dock bar centre
-
-private struct ACIDockTopKey: PreferenceKey {
-    static let defaultValue: CGFloat? = nil
-    static func reduce(value: inout CGFloat?, nextValue: () -> CGFloat?) { value = nextValue() ?? value }
-}
-
-/// Gives `ACIViewHeader(dock:)` / `ACIDockingScroll` the y of the ACI header's
-/// centre, in the coordinates of the view it wraps. The ACI views sit under
-/// `ACIPhoneHeader` (and sometimes a nudge card), so the centre is measured from
-/// the view's own top: window safe-area top + half the 52 pt bar, minus where
-/// this view starts on screen. Until measured it assumes the bar sits directly
-/// above the view.
-struct ACIDockReader<Content: View>: View {
-    @ViewBuilder var content: (ACIViewDock) -> Content
-    @State private var top: CGFloat? = nil
-
-    private static var headerCenter: CGFloat {
-        let safeTop = UIApplication.shared.connectedScenes
-            .compactMap { $0 as? UIWindowScene }
-            .flatMap(\.windows)
-            .first(where: \.isKeyWindow)?.safeAreaInsets.top ?? 0
-        return safeTop + PhoneHeaderMetrics.barHeight / 2
-    }
-
-    var body: some View {
-        let center = top.map { Self.headerCenter - $0 } ?? -PhoneHeaderMetrics.barHeight / 2
-        content(ACIViewDock(barCenter: center))
-            .background(GeometryReader { geo in
-                Color.clear.preference(key: ACIDockTopKey.self, value: geo.frame(in: .global).minY)
-            })
-            .onPreferenceChange(ACIDockTopKey.self) { top = $0 }
     }
 }
 
