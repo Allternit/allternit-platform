@@ -157,6 +157,13 @@ async fn structured_call(target: &Target, member: &str, input: &Value) -> Result
     }
 }
 
+/// Input key for an authority kernel approval token on a v2 member (not part of the hashed action).
+pub const KERNEL_TOKEN_KEY: &str = "kernel_approval_token";
+
+fn decision_needs_token(refusal: &Value) -> bool {
+    refusal.get("code").and_then(Value::as_str) == Some(crate::authority::check::APPROVAL_REQUIRED)
+}
+
 /// Run one v2 member. Called from `computer_toolset::execute` after the
 /// lease, policy, approval and audit steps, so every member keeps the same
 /// gate. Returns the toolset result (text content; no screenshots).
@@ -169,6 +176,34 @@ pub async fn execute_v2(
     input: &Value,
     run_id: &str,
 ) -> Result<ToolsetResult, Fail> {
+    // Authority kernel check (plan step 9) before the member runs. The token rides in the input
+    // as `kernel_approval_token` and is taken out before hashing and before the driver sees it.
+    let mut stripped = input.clone();
+    let token = stripped
+        .as_object_mut()
+        .and_then(|o| o.remove(KERNEL_TOKEN_KEY))
+        .and_then(|v| v.as_str().map(str::to_string));
+    let input = &stripped;
+    {
+        use crate::authority::check::{check, Action, CheckCtx, Source};
+        let risk = crate::computer_toolset::contract(Toolset::Computer)
+            .member(member)
+            .or_else(|| crate::computer_toolset::contract(Toolset::Browser).member(member))
+            .map(|m| m.risk.as_str());
+        // Same chain scope as the kernel routes (`AuthUser::tenant_id`).
+        let ctx = CheckCtx::new(state.db.clone(), &user.user_id, user.tenant_id.as_deref())
+            .with_run_id(Some(run_id.to_string()))
+            .with_token(token);
+        let mut args = input.clone();
+        if let Some(o) = args.as_object_mut() {
+            o.insert("computer_id".into(), json!(computer.id));
+        }
+        let decision = check(&ctx, &Action::new(Source::Computer, member, &args).with_risk(risk)).await;
+        if let Some(refusal) = decision.refusal() {
+            let code = if decision_needs_token(&refusal) { "approval_required" } else { "kernel_denied" };
+            return Err(Fail { message: refusal.to_string(), browser_state: None, code: Some(code) });
+        }
+    }
     match member {
         "read_ui" | "act" | "run_batch" | "verify" => {
             // D1b: this-device reaches the local sidecar; a guest reaches the

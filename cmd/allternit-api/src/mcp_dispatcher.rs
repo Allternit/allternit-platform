@@ -115,9 +115,12 @@ impl McpDispatcher {
     }
 
     /// Dispatch a tool call to the attached server identified by the namespace
-    /// prefix of `namespaced_name`.
+    /// prefix of `namespaced_name`. Every call passes the authority kernel's
+    /// `check` (plan step 9) after the tool is found and before the remote call;
+    /// a refusal comes back as a JSON error string.
     pub async fn dispatch_call(
         &self,
+        kernel_ctx: &crate::authority::check::CheckCtx,
         namespaced_name: &str,
         arguments: Value,
     ) -> Result<Value, String> {
@@ -138,6 +141,11 @@ impl McpDispatcher {
                 "Tool '{}' not found on attached MCP server '{}'",
                 tool_name, server_id
             ));
+        }
+
+        {
+            use crate::authority::check::{check, Action, Source};
+            check(kernel_ctx, &Action::new(Source::Mcp, namespaced_name, &arguments)).await.into_tool_result()?;
         }
 
         Self::call_tool_remote(&server.url, &server.headers, tool_name, arguments).await
@@ -223,6 +231,12 @@ mod tests {
     use axum::{extract::Json, routing::post, Router};
     use serde_json::json;
     use std::net::SocketAddr;
+
+    /// These tests are about forwarding; the kernel check has its own tests in `authority::check`.
+    fn off_ctx() -> crate::authority::check::CheckCtx {
+        let db = crate::db::DbHandle::new_memory().expect("db");
+        crate::authority::check::CheckCtx::new(db, "user_test", None).with_mode(crate::authority::check::Mode::Off)
+    }
 
     async fn mock_mcp_server() -> SocketAddr {
         let app = Router::new().route("/mcp", post(|Json(req): Json<Value>| async move {
@@ -325,7 +339,7 @@ mod tests {
             .unwrap();
 
         let result = dispatcher
-            .dispatch_call("mock.echo", json!({ "message": "hello" }))
+            .dispatch_call(&off_ctx(), "mock.echo", json!({ "message": "hello" }))
             .await
             .unwrap();
         assert_eq!(result["content"][0]["text"], "echo hello");
@@ -357,7 +371,7 @@ mod tests {
     async fn dispatch_call_rejects_unknown_server() {
         let dispatcher = McpDispatcher::new();
         let err = dispatcher
-            .dispatch_call("unknown.tool", json!({}))
+            .dispatch_call(&off_ctx(), "unknown.tool", json!({}))
             .await
             .unwrap_err();
         assert!(err.contains("No attached MCP server named 'unknown'"));
@@ -377,7 +391,7 @@ mod tests {
             .unwrap();
 
         let err = dispatcher
-            .dispatch_call("mock.nope", json!({}))
+            .dispatch_call(&off_ctx(), "mock.nope", json!({}))
             .await
             .unwrap_err();
         assert!(err.contains("Tool 'nope' not found"));

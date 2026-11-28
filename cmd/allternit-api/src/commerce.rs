@@ -482,12 +482,18 @@ pub trait AppCaller: Send + Sync {
     async fn complete_checkout(&self, app_id: &str, args: Value) -> Result<Value, String>;
 }
 
-pub struct DispatcherAppCaller(pub crate::mcp_dispatcher::McpDispatcher);
+pub struct DispatcherAppCaller(pub crate::mcp_dispatcher::McpDispatcher, pub DbHandle);
 
 #[async_trait]
 impl AppCaller for DispatcherAppCaller {
     async fn complete_checkout(&self, app_id: &str, args: Value) -> Result<Value, String> {
-        self.0.dispatch_call(&format!("{app_id}.complete_checkout"), args).await
+        // Host code, not a model's tool call: the buyer approved the payment in the host sheet
+        // before `pay` ran. The kernel check still writes its receipt (plan step 9).
+        let kernel_ctx = crate::authority::check::CheckCtx::new(self.1.clone(), "service:commerce", None).service(
+            allternit_authority::ActionClass::RunControl,
+            "checkout fulfilment after the buyer approved the payment in the host payment sheet",
+        );
+        self.0.dispatch_call(&kernel_ctx, &format!("{app_id}.complete_checkout"), args).await
     }
 }
 

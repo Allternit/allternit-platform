@@ -54,7 +54,7 @@ pub fn check_startup_config() -> Result<bool, CommerceError> {
 fn service(state: &AppState) -> Result<CommerceService, CommerceError> {
     let cfg = CommerceConfig::from_env()?.ok_or(CommerceError::NotConfigured)?;
     let stripe = Arc::new(StripeHttp::new(&cfg));
-    let apps = Arc::new(DispatcherAppCaller(state.mcp_dispatcher.clone()));
+    let apps = Arc::new(DispatcherAppCaller(state.mcp_dispatcher.clone(), state.db.clone()));
     Ok(CommerceService::new(cfg, state.db.clone(), stripe, apps))
 }
 

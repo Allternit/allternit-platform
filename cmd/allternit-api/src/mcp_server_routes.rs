@@ -667,6 +667,13 @@ async fn dispatch_method(
                 .get("arguments")
                 .cloned()
                 .unwrap_or_else(|| json!({}));
+            // Authority kernel token for an ask or human-only tool, outside `arguments`
+            // so it is not part of the hashed action (plan step 9).
+            let approval_token = req
+                .params
+                .get("approval_token")
+                .and_then(|v| v.as_str())
+                .map(str::to_string);
 
             if let Some(result) =
                 crate::mcp_agents::call_tool(state, user_id, &name, arguments.clone()).await
@@ -682,9 +689,11 @@ async fn dispatch_method(
             } else if name.starts_with("inference.") || name == "time.now" {
                 handle_builtin_dotted_tool(state, user_id, org_id, &name, arguments).await
             } else if name.contains('.') {
+                let kernel_ctx = crate::authority::check::CheckCtx::new(state.db.clone(), user_id, org_id)
+                    .with_token(approval_token.clone());
                 state
                     .mcp_dispatcher
-                    .dispatch_call(&name, arguments.clone())
+                    .dispatch_call(&kernel_ctx, &name, arguments.clone())
                     .await
                     .map_err(|e| e.to_string())
             } else {
@@ -693,6 +702,7 @@ async fn dispatch_method(
                     args: arguments,
                     timeout: None,
                     workspace_id: None,
+                    approval_token,
                     ..Default::default()
                 };
                 execute_tool_internal(state, &exec_request, user_id, org_id).await
