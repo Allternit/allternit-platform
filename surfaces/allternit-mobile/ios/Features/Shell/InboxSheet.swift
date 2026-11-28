@@ -16,6 +16,27 @@ final class InboxStore: ObservableObject {
     @Published private(set) var busy: Set<String> = []
     /// The item a link or notification tap asked for (`allternit://inbox/<id>`).
     @Published var focusedId: String?
+    /// AllternitOS kernel approvals waiting on you (cloud relay).
+    @Published private(set) var kernelItems: [KernelApproval] = []
+    /// The kernel approval a `allternit://inbox/kernel/...` link asked for (`KernelApproval.id`).
+    @Published var focusedKernel: String?
+
+    /// Answers one kernel approval. The row leaves only after the relay accepts;
+    /// a failure returns the plain reason to the detail sheet.
+    func resolveKernel(_ approval: KernelApproval, approve: Bool) async -> String? {
+        do {
+            try await client.resolveKernel(approval, approve: approve)
+            kernelItems.removeAll { $0.id == approval.id }
+            return nil
+        } catch is CancellationError {
+            return nil
+        } catch {
+            if let known = error as? KernelResolveError, known == .tokenExpired {
+                kernelItems.removeAll { $0.id == approval.id }
+            }
+            return (error as? KernelResolveError)?.errorDescription ?? FriendlyErrorMessage.from(error.localizedDescription)
+        }
+    }
 
     /// A notification button already answered this item in the background.
     func removeLocally(_ id: String) {
@@ -26,6 +47,9 @@ final class InboxStore: ObservableObject {
     private let client = InboxClient.shared
 
     func refresh() async {
+        // Kernel approvals come from the cloud, not the computer's runtime inbox;
+        // a failure here leaves the last list rather than hiding the rest.
+        if let kernel = try? await client.kernelApprovals() { kernelItems = kernel }
         do {
             if let list = try await client.list() {
                 items = list
@@ -76,6 +100,8 @@ struct InboxSheet: View {
     /// A phone hold open in its Review pane (Review only, never approved from the row).
     @State private var reviewing: InboxItem?
     @State private var isConnectOpen = false
+    /// A kernel approval open in its detail (the exact action, whole).
+    @State private var kernelDetail: KernelApproval?
 
     var body: some View {
         NavigationStack {
@@ -93,21 +119,28 @@ struct InboxSheet: View {
             if let id = store.focusedId, let item = store.items.first(where: { $0.id == id }), item.isPhoneAction {
                 reviewing = item
             }
+            // A KERNEL_APPROVAL push lands here: open its detail to read the action.
+            if let key = store.focusedKernel {
+                kernelDetail = store.kernelItems.first { $0.id == key }
+            }
         }
+        .sheet(item: $kernelDetail) { KernelApprovalSheet(approval: $0) }
         .sheet(item: $reviewing) { PhoneHoldReviewSheet(item: $0) }
         .sheet(isPresented: $isConnectOpen) { ConnectComputerSheet() }
-        .onDisappear { store.focusedId = nil }
+        .onDisappear { store.focusedId = nil; store.focusedKernel = nil }
     }
 
     /// The linked item is no longer waiting (answered elsewhere, or gone).
     private var focusedIsGone: Bool {
-        guard let id = store.focusedId, store.hasLoaded, store.error == nil else { return false }
+        guard store.hasLoaded, store.error == nil else { return false }
+        if let key = store.focusedKernel { return !store.kernelItems.contains { $0.id == key } }
+        guard let id = store.focusedId else { return false }
         return !store.items.contains { $0.id == id }
     }
 
     @ViewBuilder
     private var content: some View {
-        if store.hasLoaded, store.isAvailable, !(store.error != nil && store.items.isEmpty), !store.items.isEmpty {
+        if store.hasLoaded, store.isAvailable, !(store.error != nil && store.items.isEmpty && store.kernelItems.isEmpty), !(store.items.isEmpty && store.kernelItems.isEmpty) {
             list
         } else {
             DockingTitleScrollView(title: "Needs you", chrome: .navigationBar) { state }
@@ -120,7 +153,7 @@ struct InboxSheet: View {
         if !store.hasLoaded {
             ProgressView("Checking what needs you…")
                 .frame(maxWidth: .infinity, minHeight: 360)
-        } else if !store.isAvailable {
+        } else if !store.isAvailable, store.kernelItems.isEmpty {
             FriendlyStateView(
                 style: .offline,
                 icon: "laptopcomputer",
@@ -131,7 +164,7 @@ struct InboxSheet: View {
                 scene: .asleep
             )
             .frame(maxWidth: .infinity, minHeight: 360)
-        } else if let error = store.error, store.items.isEmpty {
+        } else if let error = store.error, store.items.isEmpty, store.kernelItems.isEmpty {
             FriendlyStateView(
                 style: .error,
                 icon: "exclamationmark.triangle",
@@ -141,7 +174,7 @@ struct InboxSheet: View {
                 action: { Task { await store.refresh() } }
             )
             .frame(maxWidth: .infinity, minHeight: 360)
-        } else if store.items.isEmpty {
+        } else if store.items.isEmpty, store.kernelItems.isEmpty {
             FriendlyStateView(
                 style: .empty,
                 icon: "bell.slash",
@@ -158,6 +191,11 @@ struct InboxSheet: View {
             ScrollViewReader { proxy in
             DockingTitleList(title: "Needs you") {
                 if focusedIsGone { alreadyHandledNote }
+                ForEach(store.kernelItems) { approval in
+                    KernelApprovalRow(approval: approval) { kernelDetail = approval }
+                        .id(approval.id)
+                        .listRowBackground(approval.id == store.focusedKernel ? Color("AccentPrimary").opacity(0.12) : Color("BgPrimary"))
+                }
                 ForEach(store.items) { item in
                     InboxRow(item: item, onOpen: { open(item) }, onReview: { reviewing = item })
                         .id(item.id)
@@ -338,5 +376,176 @@ private struct InboxRow: View {
         if minutes < 60 { return "\(minutes)m" }
         let hours = Int((Double(minutes) / 60).rounded())
         return hours < 24 ? "\(hours)h" : "\(Int((Double(hours) / 24).rounded()))d"
+    }
+}
+
+
+// MARK: - AllternitOS kernel approvals
+
+private enum KernelText {
+    static func classLabel(_ raw: String?) -> String {
+        guard let raw, !raw.isEmpty else { return "Action" }
+        let spaced = raw.replacingOccurrences(of: "_", with: " ").replacingOccurrences(of: "-", with: " ")
+        return spaced.prefix(1).uppercased() + spaced.dropFirst()
+    }
+
+    /// "12 min left", "Ran out of time", or nil when the kernel gave no deadline.
+    static func timeLeft(_ deadline: Date?, now: Date = Date()) -> String? {
+        guard let deadline else { return nil }
+        let seconds = Int(deadline.timeIntervalSince(now))
+        if seconds <= 0 { return "Ran out of time" }
+        if seconds < 90 { return "\(seconds) sec left" }
+        let minutes = Int((Double(seconds) / 60).rounded())
+        if minutes < 60 { return "\(minutes) min left" }
+        let hours = Int((Double(minutes) / 60).rounded())
+        return hours < 24 ? "\(hours) hr left" : "\(Int((Double(hours) / 24).rounded())) d left"
+    }
+}
+
+/// A kernel approval in the Needs-you list: the action in a few lines; the
+/// whole text and the buttons are in the detail.
+private struct KernelApprovalRow: View {
+    let approval: KernelApproval
+    let onOpen: () -> Void
+
+    var body: some View {
+        let k = approval.kernel
+        Button(action: onOpen) {
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    Text("APPROVAL · \(KernelText.classLabel(k.actionClass).uppercased())")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundColor(Color("TextSecondary"))
+                    if let who = k.assignee, !who.isEmpty {
+                        Text(who)
+                            .font(.system(size: 11))
+                            .foregroundColor(Color("TextSecondary"))
+                            .lineLimit(1)
+                    }
+                    Spacer(minLength: 4)
+                    if let left = KernelText.timeLeft(k.deadline) {
+                        Text(left)
+                            .font(.system(size: 11))
+                            .foregroundColor(Color("TextSecondary"))
+                    }
+                }
+                Text(k.actionSummary ?? "An action is waiting for your answer.")
+                    .font(.subheadline)
+                    .foregroundColor(Color("TextPrimary"))
+                    .lineLimit(3)
+                    .multilineTextAlignment(.leading)
+                HStack(spacing: 8) {
+                    if k.humanOnly {
+                        Label("Only you can approve", systemImage: "person.fill.checkmark")
+                            .font(.footnote)
+                            .foregroundColor(Color("TextSecondary"))
+                    }
+                    Spacer(minLength: 4)
+                    Text("Review")
+                        .font(.footnote.weight(.semibold))
+                        .foregroundColor(Color("AccentPrimary"))
+                }
+            }
+            .padding(.vertical, 6)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityHint("Opens the full action to approve or deny")
+    }
+}
+
+/// The exact action, never truncated, with Approve and Deny. Both call the
+/// relay with the signed-in session; neither is offered on a lock screen.
+private struct KernelApprovalSheet: View {
+    let approval: KernelApproval
+
+    @ObservedObject private var store = InboxStore.shared
+    @Environment(\.dismiss) private var dismiss
+    @State private var working: Bool?
+    @State private var failure: String?
+
+    private var stillPending: Bool { store.kernelItems.contains { $0.id == approval.id } }
+
+    var body: some View {
+        let k = approval.kernel
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 14) {
+                    Text("Exactly what will happen")
+                        .font(.footnote.weight(.semibold))
+                        .foregroundColor(Color("TextSecondary"))
+                    Text(k.actionSummary ?? "No description came with this request. Deny it unless you know what it is.")
+                        .font(.body)
+                        .foregroundColor(Color("TextPrimary"))
+                        .textSelection(.enabled)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    VStack(alignment: .leading, spacing: 8) {
+                        fact("Kind", KernelText.classLabel(k.actionClass))
+                        if let who = k.assignee, !who.isEmpty { fact("Asked by", who) }
+                        if let left = KernelText.timeLeft(k.deadline) { fact("Time", left) }
+                        if let hash = k.actionHash, !hash.isEmpty { fact("Action ID", String(hash.prefix(12))) }
+                    }
+                    if k.humanOnly {
+                        Label("Only you can approve this. An agent cannot approve it for you.", systemImage: "person.fill.checkmark")
+                            .font(.footnote)
+                            .foregroundColor(Color("TextSecondary"))
+                    }
+                    if let failure {
+                        Text(failure)
+                            .font(.footnote)
+                            .foregroundColor(.red)
+                            .accessibilityLabel("Could not answer: \(failure)")
+                    }
+                    if !stillPending && working == nil {
+                        Text(NotificationStrings.alreadyHandled)
+                            .font(.footnote)
+                            .foregroundColor(Color("TextSecondary"))
+                    }
+                    HStack(spacing: 10) {
+                        Button(working == false ? "Denying…" : "Deny") { answer(approve: false) }
+                            .buttonStyle(.bordered)
+                        Button(working == true ? "Approving…" : "Approve") { answer(approve: true) }
+                            .buttonStyle(.borderedProminent)
+                            .tint(Color("AccentPrimary"))
+                    }
+                    .controlSize(.large)
+                    .disabled(working != nil || !stillPending)
+                    .padding(.top, 4)
+                }
+                .padding(20)
+            }
+            .background(Color("BgPrimary").ignoresSafeArea())
+            .navigationTitle("Approval")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) { Button("Close") { dismiss() } }
+            }
+        }
+        .presentationDetents([.medium, .large])
+    }
+
+    private func fact(_ label: String, _ value: String) -> some View {
+        HStack(alignment: .firstTextBaseline) {
+            Text(label)
+                .font(.footnote)
+                .foregroundColor(Color("TextSecondary"))
+                .frame(width: 76, alignment: .leading)
+            Text(value)
+                .font(.footnote)
+                .foregroundColor(Color("TextPrimary"))
+        }
+    }
+
+    private func answer(approve: Bool) {
+        guard working == nil else { return }
+        working = approve
+        failure = nil
+        Task {
+            let error = await store.resolveKernel(approval, approve: approve)
+            working = nil
+            if let error { failure = error } else { dismiss() }
+        }
     }
 }

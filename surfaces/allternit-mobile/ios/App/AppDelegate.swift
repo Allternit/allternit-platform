@@ -130,6 +130,17 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
         let userInfo = response.notification.request.content.userInfo
         let urlPath = userInfo["url"] as? String
         let data = userInfo["data"] as? [String: Any]
+        // AllternitOS kernel approval: open its row (Open or a plain tap).
+        if response.notification.request.content.categoryIdentifier == NotificationCategoryID.kernelApproval
+            || (data?["kind"] as? String) == "kernel_approval",
+           let runtimeId = data?["runtimeId"] as? String, let requestId = data?["requestId"] as? String,
+           !runtimeId.isEmpty, !requestId.isEmpty {
+            await MainActor.run {
+                PushNotificationManager.shared.clearBadge()
+                DeepLinkRouter.shared.enqueue(.kernelApproval(runtimeId: runtimeId, requestId: requestId))
+            }
+            return
+        }
         let event = data?["event"] as? String
         let inboxId = data?["inboxId"] as? String
         let sessionId = data?["sessionId"] as? String
