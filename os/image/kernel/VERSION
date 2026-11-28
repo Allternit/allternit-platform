@@ -1,0 +1,5 @@
+# Pinned longterm kernel (kernel.org). Bump both lines together.
+# sha256 is from https://cdn.kernel.org/pub/linux/kernel/v6.x/sha256sums.asc (looked up 2026-11-27).
+KERNEL_VERSION=6.12.119
+KERNEL_SHA256=143b287965acb9e270095b95894e59e2eba306d7e1f6b260d4ba74fca70c0333
+KERNEL_URL=https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-6.12.119.tar.xz
