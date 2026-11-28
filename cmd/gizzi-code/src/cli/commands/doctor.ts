@@ -5,6 +5,7 @@ import { Global } from "@/runtime/context/global"
 import { Provider } from "@/runtime/providers/provider"
 import { Instance } from "@/runtime/context/project/instance"
 import { Installation } from "@/shared/installation"
+import { ReleaseFeed } from "@/shared/installation/feed"
 import fs from "fs"
 import path from "path"
 import {
@@ -17,6 +18,8 @@ import {
   type DoctorCheck,
   checkFactoryEngine,
   checkFactoryHomeMove,
+  checkUpdates,
+  findExtraGizzis,
 } from "@/cli/commands/doctorChecks"
 import { isDaemonRunning } from "@/runtime/automation/cron/daemon"
 import { supervisionState } from "@/runtime/automation/cron/supervision"
@@ -196,6 +199,18 @@ export const DoctorCommand = cmd({
       // ── Allternit Factory engine ──
       checks.push(...(await checkFactoryEngine()))
       checks.push(checkFactoryHomeMove())
+
+      // ── Updates ──
+      checks.push(
+        ...checkUpdates({
+          method: await Installation.method(),
+          channel: ReleaseFeed.channel(),
+          state: ReleaseFeed.readState(),
+          keyMissing: ReleaseFeed.keyMissing(ReleaseFeed.activeKey()),
+          current: Installation.VERSION,
+          extras: findExtraGizzis(),
+        }),
+      )
 
       // ── Project ──
       {

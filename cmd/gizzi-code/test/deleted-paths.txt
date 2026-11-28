@@ -2706,3 +2706,18 @@ src/cli/ui/ink-app/buddy/types.ts
 src/cli/ui/ink-app/buddy/useBuddyNotification.tsx
 src/cli/ui/ink-app/commands/buddy/buddy.ts
 src/shared/buddy/prompt.ts
+
+# Signed updater (steps 15-18): the three ported GCS updaters and their helpers.
+src/cli/ui/ink-app/components/AutoUpdater.tsx
+src/cli/ui/ink-app/components/NativeAutoUpdater.tsx
+src/cli/ui/ink-app/components/PackageManagerAutoUpdater.tsx
+src/cli/ui/ink-app/utils/nativeInstaller/download.ts
+# Removed by #3195 (feat/gizzi-remove-gcs-updater); lands in the same train.
+src/shared/utils/autoUpdater.ts
+src/shared/utils/nativeInstaller/download.ts
+src/shared/utils/nativeInstaller/index.ts
+src/shared/utils/nativeInstaller/installer.ts
+src/shared/utils/nativeInstaller/packageManagers.ts
+src/shared/utils/nativeInstaller/pidLock.ts
+src/shared/utils/plugins/officialMarketplaceGcs.ts
+src/cli/ui/ink-app/utils/plugins/officialMarketplaceGcs.ts

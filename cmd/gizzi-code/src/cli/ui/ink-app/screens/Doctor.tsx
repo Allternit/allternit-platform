@@ -1,6 +1,6 @@
 import figures from 'figures';
 import { join } from 'path';
-import React, { Suspense, use, useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { KeybindingWarnings } from './../components/KeybindingWarnings.tsx';
 import { McpParsingWarnings } from './../components/mcp/McpParsingWarnings.tsx';
 import { getModelMaxOutputTokens } from './../utils/context.ts';
@@ -19,14 +19,15 @@ import { Box, Text } from '../ink';
 import { useKeybindings } from '../keybindings/useKeybinding';
 import { useAppState } from '../state/AppState';
 import { getPluginErrorMessage } from '../types/plugin';
-import type { NpmDistTags } from '../utils/autoUpdater';
 import { Updater } from '@/shared/installation/updater';
+import { ReleaseFeed } from '@/shared/installation/feed';
+import { Installation } from '@/shared/installation';
+import { checkUpdates, findExtraGizzis } from '@/cli/commands/doctorChecks';
 import { type ContextWarnings, checkContextWarnings } from '../utils/doctorContextWarnings';
 import { type DiagnosticInfo, getDoctorDiagnostic } from '../utils/doctorDiagnostic';
 import { validateBoundedIntEnvVar } from '../utils/envValidation';
 import { pathExists } from '../utils/file';
 import { cleanupStaleLocks, getAllLockInfo, isPidBasedLockingEnabled, type LockInfo } from '../utils/nativeInstaller/pidLock';
-import { getInitialSettings } from '../utils/settings/settings';
 import { BASH_MAX_OUTPUT_DEFAULT, BASH_MAX_OUTPUT_UPPER_LIMIT } from '../utils/shell/outputLimits';
 import { TASK_MAX_OUTPUT_DEFAULT, TASK_MAX_OUTPUT_UPPER_LIMIT } from '../utils/task/outputFormatting';
 import { getXDGStateHome } from '../utils/xdg';
@@ -55,25 +56,19 @@ type VersionLockInfo = {
   locksDir: string;
   staleLocksCleaned: number;
 };
-function DistTagsDisplay(t0: {
-  promise: Promise<NpmDistTags>;
-}) {
-  const {
-    promise
-  } = t0;
-  const distTags = use(promise);
-  if (!distTags.latest) {
-    const t1 = <Text dimColor={true}>└ Latest version: not checked yet</Text>;
-
-    return t1;
-  }
-  const t1 = distTags.stable && <Text>└ Stable version: {distTags.stable}</Text>;
-
-  const t2 = <Text>└ Latest version: {distTags.latest}</Text>;
-
-  const t3 = <>{t1}{t2}</>;
-
-  return t3;
+function UpdateLines({ fallbackMethod }: { fallbackMethod: string }) {
+  const lines = useMemo(() => {
+    const status = Updater.getStatus();
+    return checkUpdates({
+      method: status.method === 'pending' ? fallbackMethod : status.method,
+      channel: ReleaseFeed.channel(),
+      state: ReleaseFeed.readState(),
+      keyMissing: ReleaseFeed.keyMissing(ReleaseFeed.activeKey()),
+      current: Installation.VERSION,
+      extras: findExtraGizzis()
+    });
+  }, [fallbackMethod]);
+  return <>{lines.map(line => <Text key={line.id} color={line.status === 'warn' || line.status === 'fail' ? 'warning' : undefined}>└ {line.message}</Text>)}</>;
 }
 export function Doctor({
     onDone
@@ -91,10 +86,6 @@ export function Doctor({
   const [contextWarnings, setContextWarnings] = useState(null);
   const [versionLockInfo, setVersionLockInfo] = useState(null);
   const validationErrors = useSettingsErrors();
-  const t2 = getDoctorDiagnostic().then(_temp6);
-
-  const distTagsPromise = t2;
-  const autoUpdatesChannel = getInitialSettings()?.autoUpdatesChannel ?? "latest";
   const t3 = validationErrors.filter(_temp7);
 
   const errorsExcludingMcp = t3;
@@ -217,9 +208,9 @@ export function Doctor({
 
   const t27 = diagnostic.hasUpdatePermissions !== null && <Text>└ Update permissions:{" "}{diagnostic.hasUpdatePermissions ? "Yes" : "No (requires sudo)"}</Text>;
 
-  const t28 = <Text>└ Auto-update channel: {autoUpdatesChannel}</Text>;
+  const t28 = null;
 
-  const t29 = <Suspense fallback={null}><DistTagsDisplay promise={distTagsPromise} /></Suspense>;
+  const t29 = <UpdateLines fallbackMethod={String(diagnostic.installationType)} />;
 
   const t30 = <Box flexDirection="column">{t24}{t26}{t27}{t28}{t29}</Box>;
 
@@ -293,15 +284,6 @@ function _temp8(v) {
 }
 function _temp7(error) {
   return error.mcpErrorMetadata === undefined;
-}
-function _temp6() {
-  // The signed release feed is the only version source (PLAN.md D2); the
-  // background updater has already read it, so doctor never fetches here.
-  const status = Updater.getStatus();
-  return {
-    latest: status.latest ?? null,
-    stable: null
-  };
 }
 function _temp4(s_2) {
   return s_2.plugins.errors;
