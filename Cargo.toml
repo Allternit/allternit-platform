@@ -14,6 +14,7 @@ members = [
     "factory/pane",
     "factory/terminal-service",
     "cmd/allternit-factory",
+    "domains/kernel/authority",
     "domains/kernel/core/kernel-contracts",
     "domains/kernel/core/wasm-runtime",
     "platform/contracts/driver-interface",
