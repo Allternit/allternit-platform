@@ -1377,7 +1377,7 @@ impl<'a> ProdBackend<'a> {
 }
 
 /// The phone hold that stands in for the kernel approval on a phone tool, if any: the Desktop
-/// phone guard's own hold for SMS and dial, or the approved `hold_id` of a retry.
+/// phone guard's own hold for SMS, dial and device-control input, or the approved `hold_id` of a retry.
 fn phone_hold(name: &str, args: &Value) -> Option<String> {
     if !name.starts_with("phone_") {
         return None;
@@ -1387,6 +1387,11 @@ fn phone_hold(name: &str, args: &Value) -> Option<String> {
     }
     match (name, args.get("name").and_then(Value::as_str)) {
         ("phone_tool", Some("phone.sms.send" | "phone.call.dial")) => Some("phone_hold:device_guard".to_string()),
+        // Device-control taps, typing and app opens: the device's own phone guard is the gate, the
+        // cloud records the receipt. Payments and anything that leaves the device as a message
+        // (SMS/dial above aside) and agent runs (`phone_task`, `phone_skill_run`) stay under the kernel.
+        ("phone_tap" | "phone_type" | "phone_open_app", _) => Some("phone_hold:device_guard".to_string()),
+        ("phone_tool", Some("phone.tap" | "phone.type" | "phone.swipe" | "phone.open_app" | "phone.key" | "phone.back" | "phone.home")) => Some("phone_hold:device_guard".to_string()),
         _ => None,
     }
 }
@@ -2503,13 +2508,16 @@ mod tests {
         assert!(backend.kernel_gate(&key, "phone_tool", &sms).await.is_ok());
         assert_eq!(count().await, 1);
 
-        // Enforce: the SMS send passes on the Desktop phone guard's hold (the owner approves it
-        // there, no second ask); a tap with no hold and an unlisted tool are refused through the
-        // real executors with the action hash; a read and `respond` pass the gate.
+        // Enforce: the SMS send and a tap pass on the device's phone guard (the owner approves it
+        // there, no second ask, receipt approved_by `phone_hold:device_guard`); a `phone_task`
+        // run and an unlisted tool are refused through the real executors with the action hash;
+        // a read and `respond` pass the gate.
         set_test_kernel(Some(Mode::Enforce));
         assert!(backend.kernel_gate(&key, "phone_tool", &sms).await.is_ok());
         let tap = json!({ "serial": "S1", "x": 1, "y": 2 });
-        let out = backend.phone_call(&key, "phone_tap", &tap).await;
+        assert!(backend.kernel_gate(&key, "phone_tap", &tap).await.is_ok());
+        let task = json!({ "serial": "S1", "goal": "pay the invoice" });
+        let out = backend.phone_call(&key, "phone_task", &task).await;
         assert_eq!(out["isError"], true);
         assert_eq!(out["structuredContent"]["code"], "approval_required");
         assert!(out["structuredContent"]["action_hash"].as_str().is_some_and(|h| h.starts_with("sha256:")));
@@ -2517,7 +2525,7 @@ mod tests {
         assert!(err.contains("approval_required"), "{err}");
         assert!(backend.kernel_gate(&key, "mail_read", &json!({})).await.is_ok());
         assert!(backend.kernel_gate(&key, "respond", &json!({})).await.is_ok());
-        assert_eq!(count().await, 6, "one receipt per call");
+        assert_eq!(count().await, 7, "one receipt per call");
         set_test_kernel(None);
     }
 }
