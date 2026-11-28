@@ -62,25 +62,32 @@ BEGIN
     SELECT RAISE(ABORT, 'approval_token_spends is append-only');
 END;
 
--- One append-only hash chain per chain key (`run_id`, as ReceiptChainV1.run_id).
--- hash = sha256 over canonical {run_id, idx, domain, schema_id, schema_version, payload, prev_hash};
+-- One append-only hash chain per (principal, tenant).
+-- Chain scope is (principal, tenant) (CONTRACT.md 11.2); run_id stays as a column.
+-- hash = sha256 over canonical {prev_hash, kind, principal, tenant, payload_hash, decision, created_at, run_id, idx, domain, schema_id, schema_version};
+-- key_id / signer_pub name the key that signed the row, so a rotated key reads "signed by a previous key", not "tampered";
 -- prev_hash is `sha256:` + 64 zeros at idx 0. `kind` mirrors payload.kind (CONTRACT.md 11.2).
 CREATE TABLE IF NOT EXISTS kernel_receipts (
     receipt_id       TEXT PRIMARY KEY,
     run_id           TEXT NOT NULL,
+    principal        TEXT NOT NULL,
+    tenant           TEXT NOT NULL,
     idx              INTEGER NOT NULL CHECK (idx >= 0),
     domain           TEXT NOT NULL,
     kind             TEXT NOT NULL,
     schema_id        TEXT NOT NULL,
     schema_version   TEXT NOT NULL,
     payload          TEXT NOT NULL,
+    payload_hash     TEXT NOT NULL CHECK (payload_hash LIKE 'sha256:%' AND length(payload_hash) = 71),
+    decision         TEXT NOT NULL,
     prev_hash        TEXT NOT NULL CHECK (prev_hash LIKE 'sha256:%' AND length(prev_hash) = 71),
     hash             TEXT NOT NULL UNIQUE CHECK (hash LIKE 'sha256:%' AND length(hash) = 71),
     signature        TEXT NOT NULL,
     key_id           TEXT NOT NULL,
+    signer_pub       TEXT NOT NULL,
     idempotency_key  TEXT UNIQUE,
     created_at       TEXT NOT NULL,
-    UNIQUE (run_id, idx)
+    UNIQUE (principal, tenant, idx)
 );
 
 CREATE INDEX IF NOT EXISTS idx_kernel_receipts_kind

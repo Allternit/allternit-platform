@@ -56,9 +56,26 @@ The kernel signs approval tokens and receipts with one Ed25519 key. Where it liv
 
 On Desktop the app's main process keeps the key in the OS keystore and passes it to the local API when the API starts. The key never goes in a file or an environment variable there. When you update from a build that kept the key in a file, Desktop moves the key into the keystore and then deletes the file. If the keystore is locked or turned down, approvals stay off until it unlocks. Desktop does not fall back to a new file.
 
+Desktop also never replaces a lost key with a new one. After the first launch it leaves a marker (no key material) next to the data folder. If the keystore entry later reads as missing or damaged while that marker exists, Desktop starts the API without a key and approvals return `kernel_unavailable`, with a clear error in the log. A new key would otherwise leave every old receipt unverifiable without telling you. Restore the entry to turn approvals back on.
+
 ## The receipt chain
 
-One append-only hash chain, `kernel_receipts`. Each row holds the previous hash, its own hash and an Ed25519 signature. The kernel writes the receipt before it returns the answer that lets an action run; if the write fails, the answer is deny. Edited rows fail chain verification, and the kernel refuses to extend a broken chain. See [Receipts](/architecture/receipts).
+One append-only log, `kernel_receipts`, kept as a hash chain per principal and tenant (your account in your workspace), not per run and not per kind of receipt. The run a receipt belongs to is a column on the row. Each row holds the previous hash in its chain, its own hash and an Ed25519 signature. The hash covers the previous hash, the kind, the principal, the tenant, a hash of the payload, the decision and the time, so none of them can be edited unnoticed. The row also records which key signed it.
+
+The kernel writes the receipt before it changes anything, in the same database transaction as the change. Request, resolve (approve, deny, expiry), redeem and every denial work this way. If the write fails, the answer is deny (`kernel_unavailable`). Two writers on one chain are serialized, so the chain stays a line. Before extending a chain the kernel checks the last row, and refuses to extend a chain that fails (`chain_broken`).
+
+### Receipt routes
+
+Both routes need a person's session (the same check as resolve) and read only your own chain. A run, agent, bot, MCP client or API key is refused.
+
+| Route | What it returns |
+|---|---|
+| `GET /api/v1/kernel/receipts` | Your receipts, newest first. Query: `limit` (up to 500), `before` (an `idx`, to page). |
+| `GET /api/v1/kernel/receipts/verify` | Recomputes every hash, link and signature in order. Returns `ok`, the row count, the first bad row (`receipt_id`, `idx`, `reason`) and `signed_by_previous_key`. |
+
+### The verify rule
+
+An edited row fails with the first bad row named: `payload_hash_mismatch`, `hash_mismatch`, `broken_link` or `bad_signature`. A row signed by a different key than the one in use is not tampering: if its signature verifies against the public key stored on that row, it counts under `signed_by_previous_key` and the chain still passes. A signature that does not verify against its own stored key fails. Deleting or updating a row is refused by database triggers.
 
 ## The four depths
 

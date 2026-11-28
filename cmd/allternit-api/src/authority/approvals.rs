@@ -20,7 +20,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 
 use super::tokens::{self, TokenClaims};
-use super::{append_receipt, ReceiptInput};
+use super::audit::{append, append_in_tx, ReceiptInput};
 use crate::db::DbHandle;
 
 pub const REQUEST_SCHEMA_ID: &str = "allternit.os.ApprovalRequestV1";
@@ -57,6 +57,8 @@ pub struct SqlAuthority {
     db: DbHandle,
     signer: Arc<ReceiptSigner>,
     now: Option<DateTime<Utc>>,
+    /// Chain scope with the principal (CONTRACT.md 11.2).
+    tenant: String,
 }
 
 struct Stored {
@@ -89,7 +91,26 @@ fn requested_ttl(ext: Option<&Map<String, Value>>) -> Option<u64> {
 
 impl SqlAuthority {
     pub fn new(db: DbHandle, signer: Arc<ReceiptSigner>) -> Self {
-        Self { db, signer, now: None }
+        Self { db, signer, now: None, tenant: super::audit::DEFAULT_TENANT.to_string() }
+    }
+
+    /// Chain scope: the caller's tenant (`AuthUser::tenant_id`); `default` when there is none.
+    pub fn with_tenant(mut self, tenant: Option<String>) -> Self {
+        self.tenant = tenant.filter(|t| !t.is_empty()).unwrap_or_else(|| super::audit::DEFAULT_TENANT.to_string());
+        self
+    }
+
+    fn input<'a>(&'a self, run_id: &'a str, principal: &'a str, decision: &'a str, payload: Value) -> ReceiptInput<'a> {
+        ReceiptInput {
+            run_id,
+            principal,
+            tenant: &self.tenant,
+            kind: ReceiptKind::Approval,
+            schema_id: REQUEST_SCHEMA_ID,
+            decision,
+            payload,
+            idempotency_key: None,
+        }
     }
 
     /// Fix the clock (tests).
@@ -107,17 +128,12 @@ impl SqlAuthority {
     }
 
     /// Write a denial receipt in its own transaction and return the error carrying it.
-    fn deny(&self, chain: &str, code: ErrorCode, message: &str, mut payload: Value) -> AuthorityError {
+    fn deny(&self, principal: &str, chain: &str, code: ErrorCode, message: &str, mut payload: Value) -> AuthorityError {
         payload["event"] = json!("denied");
         payload["code"] = json!(enum_str(code));
         payload["reason"] = json!(message);
-        let written = self.connect().and_then(|conn| {
-            append_receipt(
-                &conn,
-                &self.signer,
-                ReceiptInput { chain, kind: ReceiptKind::Approval, schema_id: REQUEST_SCHEMA_ID, payload, idempotency_key: None },
-                self.now(),
-            )
+        let written = self.connect().and_then(|mut conn| {
+            append(&mut conn, &self.signer, self.input(chain, principal, "denied", payload), self.now())
         });
         match written {
             Ok(receipt_id) => AuthorityError::new(code, message, Some(receipt_id)),
@@ -226,20 +242,19 @@ impl SqlAuthority {
 
         let mut conn = self.connect()?;
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate).map_err(db_err)?;
-        append_receipt(
+        append_in_tx(
             &tx,
             &self.signer,
-            ReceiptInput {
-                chain: &body.run_id,
-                kind: ReceiptKind::Approval,
-                schema_id: REQUEST_SCHEMA_ID,
-                payload: json!({
+            self.input(
+                &body.run_id,
+                &caller.principal,
+                "request",
+                json!({
                     "event": "request", "request_id": request_id, "action_class": enum_str(body.action_class),
                     "action_hash": hash, "principal": body.principal, "owner": caller.principal,
                     "caller_kind": enum_str(caller.kind), "deadline": body.deadline, "token_ttl_secs": ttl,
                 }),
-                idempotency_key: None,
-            },
+            ),
             now,
         )?;
         tx.execute(
@@ -290,6 +305,7 @@ impl SqlAuthority {
             "caller_kind": enum_str(caller.kind), "caller": caller.principal,
         });
         self.deny(
+            &caller.principal,
             &chain,
             ErrorCode::ForbiddenCaller,
             "approving on Allternit Desktop needs a user-presence check (Touch ID or Windows Hello); approve from the Allternit web or phone app if this computer has neither",
@@ -312,22 +328,22 @@ impl SqlAuthority {
         });
 
         if caller.kind != CallerKind::Human {
-            return Err(self.deny(&chain, ErrorCode::ForbiddenCaller, "only a person's session can resolve an approval", ctx));
+            return Err(self.deny(&caller.principal, &chain, ErrorCode::ForbiddenCaller, "only a person's session can resolve an approval", ctx));
         }
         // Another account's request reads as not found, so ids do not leak across accounts.
         let Some(stored) = stored.filter(|s| s.owner_user_id == caller.principal) else {
-            return Err(self.deny(&chain, ErrorCode::NotFound, "no such approval request", ctx));
+            return Err(self.deny(&caller.principal, &chain, ErrorCode::NotFound, "no such approval request", ctx));
         };
         let req = &stored.request;
         if req.assignee != "owner" && req.assignee != caller.principal {
-            return Err(self.deny(&chain, ErrorCode::ForbiddenCaller, "this request is assigned to someone else", ctx));
+            return Err(self.deny(&caller.principal, &chain, ErrorCode::ForbiddenCaller, "this request is assigned to someone else", ctx));
         }
         // No self-approval through a thin human wrapper: the resolver is not the acting principal.
         if req.principal == caller.principal {
-            return Err(self.deny(&chain, ErrorCode::ForbiddenCaller, "the requesting principal cannot resolve its own request", ctx));
+            return Err(self.deny(&caller.principal, &chain, ErrorCode::ForbiddenCaller, "the requesting principal cannot resolve its own request", ctx));
         }
         if req.status != Some(ApprovalStatus::Open) {
-            return Err(self.deny(&chain, ErrorCode::Conflict, "request is already resolved", ctx));
+            return Err(self.deny(&caller.principal, &chain, ErrorCode::Conflict, "request is already resolved", ctx));
         }
         let expired = tokens::parse_ts(&req.deadline).map_or(true, |d| now > d);
 
@@ -338,10 +354,10 @@ impl SqlAuthority {
 
         if expired {
             payload["event"] = json!("expired");
-            let rid = append_receipt(&tx, &self.signer, ReceiptInput { chain: &chain, kind: ReceiptKind::Approval, schema_id: REQUEST_SCHEMA_ID, payload, idempotency_key: None }, now)?;
+            let rid = append_in_tx(&tx, &self.signer, self.input(&chain, &caller.principal, "expired", payload), now)?;
             if open_guard(&tx, "UPDATE approval_requests SET status = 'expired', resolved_at = ?2 WHERE request_id = ?1 AND status = 'open'", &[&body.request_id, &resolved_at]).is_err() {
                 drop(tx);
-                return Err(self.deny(&chain, ErrorCode::Conflict, "request changed while resolving", ctx));
+                return Err(self.deny(&caller.principal, &chain, ErrorCode::Conflict, "request changed while resolving", ctx));
             }
             tx.commit().map_err(db_err)?;
             return Err(AuthorityError::new(ErrorCode::Conflict, "request passed its deadline and was rejected", Some(rid)));
@@ -365,7 +381,7 @@ impl SqlAuthority {
                 payload["token_id"] = json!(claims.token_id);
                 payload["action_hash"] = json!(claims.action_hash);
                 payload["expires_at"] = json!(token.expires_at);
-                append_receipt(&tx, &self.signer, ReceiptInput { chain: &chain, kind: ReceiptKind::Approval, schema_id: REQUEST_SCHEMA_ID, payload, idempotency_key: None }, now)?;
+                append_in_tx(&tx, &self.signer, self.input(&chain, &caller.principal, "approve", payload), now)?;
                 if open_guard(
                     &tx,
                     "UPDATE approval_requests SET status = 'approved', resolved_at = ?2, resolved_by = ?3, resolve_note = ?4, token_id = ?5
@@ -375,14 +391,14 @@ impl SqlAuthority {
                 .is_err()
                 {
                     drop(tx);
-                    return Err(self.deny(&chain, ErrorCode::Conflict, "request changed while resolving", ctx));
+                    return Err(self.deny(&caller.principal, &chain, ErrorCode::Conflict, "request changed while resolving", ctx));
                 }
                 tx.commit().map_err(db_err)?;
                 Ok(Resolution::Approved(token))
             }
             Decision::Deny => {
                 payload["event"] = json!("deny");
-                append_receipt(&tx, &self.signer, ReceiptInput { chain: &chain, kind: ReceiptKind::Approval, schema_id: REQUEST_SCHEMA_ID, payload, idempotency_key: None }, now)?;
+                append_in_tx(&tx, &self.signer, self.input(&chain, &caller.principal, "deny", payload), now)?;
                 if open_guard(
                     &tx,
                     "UPDATE approval_requests SET status = 'denied', resolved_at = ?2, resolved_by = ?3, resolve_note = ?4
@@ -392,7 +408,7 @@ impl SqlAuthority {
                 .is_err()
                 {
                     drop(tx);
-                    return Err(self.deny(&chain, ErrorCode::Conflict, "request changed while resolving", ctx));
+                    return Err(self.deny(&caller.principal, &chain, ErrorCode::Conflict, "request changed while resolving", ctx));
                 }
                 tx.commit().map_err(db_err)?;
                 let mut out = stored.request;
@@ -419,7 +435,7 @@ impl SqlAuthority {
 
         let claims = match tokens::verify(&self.signer, &body.token) {
             Ok(c) => c,
-            Err(reason) => return Err(self.deny(&fallback_chain, ErrorCode::TokenInvalid, reason, ctx)),
+            Err(reason) => return Err(self.deny(&caller.principal, &fallback_chain, ErrorCode::TokenInvalid, reason, ctx)),
         };
         ctx["token_id"] = json!(claims.token_id);
         ctx["request_id"] = json!(claims.request_id);
@@ -434,35 +450,31 @@ impl SqlAuthority {
         drop(conn);
 
         let Some(stored) = stored else {
-            return Err(self.deny(&fallback_chain, ErrorCode::TokenInvalid, "token names no known request", ctx));
+            return Err(self.deny(&caller.principal, &fallback_chain, ErrorCode::TokenInvalid, "token names no known request", ctx));
         };
         let chain = stored.request.run_id.clone();
         if stored.owner_user_id != caller.principal {
-            return Err(self.deny(&chain, ErrorCode::ForbiddenCaller, "token belongs to another account", ctx));
+            return Err(self.deny(&caller.principal, &chain, ErrorCode::ForbiddenCaller, "token belongs to another account", ctx));
         }
         if stored.request.status != Some(ApprovalStatus::Approved) || stored.token_id.as_deref() != Some(claims.token_id.as_str()) {
-            return Err(self.deny(&chain, ErrorCode::TokenInvalid, "token was not issued for this request", ctx));
+            return Err(self.deny(&caller.principal, &chain, ErrorCode::TokenInvalid, "token was not issued for this request", ctx));
         }
         if spent {
-            return Err(self.deny(&chain, ErrorCode::TokenReplayed, "token already spent", ctx));
+            return Err(self.deny(&caller.principal, &chain, ErrorCode::TokenReplayed, "token already spent", ctx));
         }
         if now > claims.expires_at {
-            return Err(self.deny(&chain, ErrorCode::TokenExpired, "token expired", ctx));
+            return Err(self.deny(&caller.principal, &chain, ErrorCode::TokenExpired, "token expired", ctx));
         }
         if claims.action_hash != body.action_hash || stored.request.action_hash.as_deref() != Some(body.action_hash.as_str()) {
-            return Err(self.deny(&chain, ErrorCode::HashMismatch, "token is bound to a different payload", ctx));
+            return Err(self.deny(&caller.principal, &chain, ErrorCode::HashMismatch, "token is bound to a different payload", ctx));
         }
 
         let mut conn = self.connect()?;
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate).map_err(db_err)?;
         let mut payload = ctx.clone();
         payload["event"] = json!("redeem");
-        let receipt_id = append_receipt(
-            &tx,
-            &self.signer,
-            ReceiptInput { chain: &chain, kind: ReceiptKind::Approval, schema_id: REQUEST_SCHEMA_ID, payload, idempotency_key: None },
-            now,
-        )?;
+        let receipt_id =
+            append_in_tx(&tx, &self.signer, self.input(&chain, &caller.principal, "redeem", payload), now)?;
         let inserted = tx.execute(
             "INSERT INTO approval_token_spends (token_id, request_id, action_hash, redeemed_by, spend_receipt_id, spent_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
@@ -472,7 +484,7 @@ impl SqlAuthority {
             Ok(_) => {}
             Err(rusqlite::Error::SqliteFailure(e, _)) if e.code == rusqlite::ErrorCode::ConstraintViolation => {
                 drop(tx);
-                return Err(self.deny(&chain, ErrorCode::TokenReplayed, "token already spent", ctx));
+                return Err(self.deny(&caller.principal, &chain, ErrorCode::TokenReplayed, "token already spent", ctx));
             }
             Err(e) => return Err(db_err(e)),
         }

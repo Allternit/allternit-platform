@@ -17,6 +17,13 @@
  * and only then deleted. If the keystore can't take it, the file is left in
  * place and used this launch, so the key is never lost.
  *
+ * Key continuity: once a seed has been stored, a non-secret marker file
+ * (`<data dir>/kernel/seed-stored`) says so. If the keystore entry later reads
+ * back as missing or damaged while the marker exists, no new seed is generated:
+ * a new key would silently orphan the signature on every old receipt. The
+ * launch fails closed (KernelKeyLostError, no seed handed over) until the
+ * entry is restored.
+ *
  * The seed is never logged. Development builds use secure-store's local
  * envelope instead of the Keychain (same as every other Desktop secret), so a
  * rebuild does not prompt; packaged builds always use the OS keystore.
@@ -35,6 +42,34 @@ export type KernelKeyStore = {
   read(key: string): string | null;
   write(key: string, value: string): void;
 };
+
+/** A seed was stored before but the keystore no longer yields it. Never answered by generating a new one. */
+export class KernelKeyLostError extends Error {
+  constructor() {
+    super('the kernel signing key was stored before but cannot be read now (keystore entry missing or damaged); not generating a new key because old receipts would stop verifying');
+    this.name = 'KernelKeyLostError';
+  }
+}
+
+/** Non-secret marker beside the legacy key path: "a seed has been stored on this machine". */
+export function kernelKeyMarkerPath(dataDir: string): string {
+  return path.join(dataDir, 'kernel', 'seed-stored');
+}
+
+function seedWasStored(markerFile: string | undefined): boolean {
+  return markerFile !== undefined && fs.existsSync(markerFile);
+}
+
+function markSeedStored(markerFile: string | undefined): void {
+  if (markerFile === undefined) return;
+  try {
+    fs.mkdirSync(path.dirname(markerFile), { recursive: true });
+    // No key material in the marker, only the fact that a seed was stored.
+    fs.writeFileSync(markerFile, `stored ${new Date().toISOString()}\n`, { mode: 0o600 });
+  } catch {
+    /* the marker is a safety net, not a requirement */
+  }
+}
 
 export type KernelKeyResult = {
   seedHex: string;
@@ -64,7 +99,13 @@ function readLegacySeed(file: string): string | null {
  * kernel approvals stay unavailable (fail closed) instead of falling back to a
  * new file.
  */
-export function loadOrCreateKernelSeed(store: KernelKeyStore, legacyFile: string): KernelKeyResult {
+export function loadOrCreateKernelSeed(store: KernelKeyStore, legacyFile: string, markerFile?: string): KernelKeyResult {
+  const result = loadSeed(store, legacyFile, markerFile);
+  markSeedStored(markerFile);
+  return result;
+}
+
+function loadSeed(store: KernelKeyStore, legacyFile: string, markerFile: string | undefined): KernelKeyResult {
   const legacy = readLegacySeed(legacyFile);
   let stored: string | null;
   try {
@@ -78,6 +119,8 @@ export function loadOrCreateKernelSeed(store: KernelKeyStore, legacyFile: string
     if (legacy === stored) fs.rmSync(legacyFile, { force: true });
     return { seedHex: stored, source: 'keystore' };
   }
+  // A seed was stored before and the entry is gone or damaged: do not mint a new one.
+  if (!legacy && seedWasStored(markerFile)) throw new KernelKeyLostError();
   const seedHex = legacy ?? crypto.randomBytes(32).toString('hex');
   try {
     store.write(KERNEL_KEY_SECRET, seedHex);
