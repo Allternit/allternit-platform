@@ -841,11 +841,15 @@ internal fun BotScreen(title: String, nav: BotNavigator, subtitle: String? = nul
 }
 
 /**
- * Docking title for a pushed Bots screen (UI feedback 11-25 A4/A6). The content scrolls however it likes (lazy list or
- * column), so the page offset is read from the scroll the content consumes (nested scroll), in dp.
+ * Docking title for a pushed Bots screen (UI feedback 11-25 A4/A6). The bar sits above the content, so the content's
+ * scroller registers its real scroll in the frame's [com.allternit.core.design.DockScrollSlot]
+ * (`rememberDockSourceScrollState()` / `rememberDockSourceLazyListState()`); that offset knows the scroll range, so a
+ * page that overflows by less than the dock distance still docks at its bottom and one that fits never docks.
+ * Content that registers nothing falls back to the scroll it consumes (nested scroll), in dp.
  */
 @Composable
 internal fun BotDockFrame(body: @Composable (Modifier) -> Unit) {
+    val slot = androidx.compose.runtime.remember { com.allternit.core.design.DockScrollSlot() }
     val density = androidx.compose.ui.platform.LocalDensity.current.density
     val y = androidx.compose.runtime.remember { androidx.compose.runtime.mutableFloatStateOf(0f) }
     val connection = androidx.compose.runtime.remember(density) {
@@ -856,8 +860,11 @@ internal fun BotDockFrame(body: @Composable (Modifier) -> Unit) {
             }
         }
     }
-    com.allternit.core.design.ProvideDockScroll({ y.floatValue }) {
-        body(Modifier.nestedScroll(connection))
+    val offset = androidx.compose.runtime.remember(slot) { { slot.source?.invoke() ?: y.floatValue } }
+    androidx.compose.runtime.CompositionLocalProvider(com.allternit.core.design.LocalDockScrollSlot provides slot) {
+        com.allternit.core.design.ProvideDockScroll(offset) {
+            body(Modifier.nestedScroll(connection))
+        }
     }
 }
 

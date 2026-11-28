@@ -39,6 +39,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.allternit.core.design.AllternitStatic
 import com.allternit.core.design.AllternitTheme
+import com.allternit.core.design.rememberDockSourceScrollState
 import com.allternit.core.design.ProvideDockScroll
 import com.allternit.feature.artifacts.LibraryField
 import com.allternit.feature.artifacts.LibraryIconButton
@@ -203,7 +204,7 @@ internal fun AgentDetailView(bot: BotRecord, store: BotModeStore, nav: BotNaviga
     var publishOpen by remember { mutableStateOf(false) }
     var editOpen by remember { mutableStateOf(false) }
     var behaviorOpen by remember { mutableStateOf(false) }
-    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(vertical = 8.dp).testTag("agentDetail")) {
+    Column(Modifier.fillMaxSize().verticalScroll(rememberDockSourceScrollState()).padding(vertical = 8.dp).testTag("agentDetail")) {
         Row(Modifier.padding(horizontal = 20.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             BotAvatar(bot, 52.dp)
             Column(Modifier.weight(1f)) {

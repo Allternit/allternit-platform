@@ -63,10 +63,10 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
-import androidx.compose.ui.platform.LocalDensity
 import com.allternit.core.design.AllternitStatic
 import com.allternit.core.design.BlockText
 import com.allternit.core.design.DockSpec
+import com.allternit.core.design.rememberDockOffset
 import com.allternit.core.design.DockingBlockTitle
 import com.allternit.core.design.EmptyArtKind
 import com.allternit.core.design.InlineEmpty
@@ -167,7 +167,6 @@ fun ProjectsListScreen(
             last = p
         }
     }
-    val density = LocalDensity.current.density
     val introStore = nav.introStore ?: LocalIntroSeenStore.current
     var introOpen by remember { mutableStateOf(false) }
 
@@ -304,9 +303,8 @@ fun ProjectsListScreen(
             }
         }
         // The block title docks into the bar as the page scrolls; the header sits on top of its band.
-        val dockOffset = remember(gridState, density) {
-            { if (gridState.firstVisibleItemIndex > 0) DockSpec.DOCK * 2f else gridState.firstVisibleItemScrollOffset / density }
-        }
+        // A short grid still docks at its bottom; one that does not overflow never docks.
+        val dockOffset = rememberDockOffset(gridState)
         DockingBlockTitle("Projects", dockOffset, modifier = Modifier.fillMaxSize().statusBarsPadding())
         Column(Modifier.statusBarsPadding()) {
             LibraryHeader(

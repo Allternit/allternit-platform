@@ -891,6 +891,7 @@
 		D2844F827C5059D14C9CCBCD /* AppGroup.swift in Sources */ = {isa = PBXBuildFile; fileRef = C5222EE1EE170C34F038CA47 /* AppGroup.swift */; };
 		D2BB004CFCD9B0F3E9DD4B04 /* CloudComputerBackupsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1BBD80F6F20C67C0DDB49E2D /* CloudComputerBackupsView.swift */; };
 		D3393C5128D18740FC427E67 /* GenerationProgressView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FFAF2EB69C1281F58648C0BD /* GenerationProgressView.swift */; };
+		D35BC56A072C3888917691B1 /* DockMathTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5929348826BFA6348D8251D /* DockMathTests.swift */; };
 		D3999C8472C451B307AFB623 /* AppGroupStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 879AEECFFCCDD7AD3D79A2CA /* AppGroupStore.swift */; };
 		D3F8D1E73F813E13DAAFF1D2 /* LiveActivityManagerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4D3988B903632B3ADBE8074A /* LiveActivityManagerTests.swift */; };
 		D41B86E3A8C7EBF626DCFA16 /* PaneRender.swift in Sources */ = {isa = PBXBuildFile; fileRef = 26C1FE61EB3B6564221C4A7F /* PaneRender.swift */; };
@@ -2038,6 +2039,7 @@
 		E577369AFD00B502E994E337 /* CloudFilesClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CloudFilesClient.swift; sourceTree = "<group>"; };
 		E57F3EA1718624922A08A5A7 /* RememberedAccounts.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RememberedAccounts.swift; sourceTree = "<group>"; };
 		E587D332DB32760202E22781 /* BadgePop.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BadgePop.swift; sourceTree = "<group>"; };
+		E5929348826BFA6348D8251D /* DockMathTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DockMathTests.swift; sourceTree = "<group>"; };
 		E5C1F07E3B62EBB3EF55E2F4 /* RunCodeResultTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RunCodeResultTests.swift; sourceTree = "<group>"; };
 		E60A99D58765EBD570CC5278 /* PlanThreadClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlanThreadClient.swift; sourceTree = "<group>"; };
 		E6156CCE9808D4C6377A5FB6 /* BotOperationalState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BotOperationalState.swift; sourceTree = "<group>"; };
@@ -3096,6 +3098,7 @@
 				859CBC11D91C0867FE68E290 /* ConsoleWholeDiskTests.swift */,
 				BE44ED582CA4DA23E6DADFBB /* DecideDelegateIntentRulesTests.swift */,
 				6D1CF76A3B4AF38B5A019D23 /* DeepLinkTests.swift */,
+				E5929348826BFA6348D8251D /* DockMathTests.swift */,
 				DD7AEBB0FB7A8734D3B1DA5C /* EditHistoryTests.swift */,
 				2C74749389075E00DEF8A9CD /* FilesPackageManifestTests.swift */,
 				2A728483272F57126FA33727 /* GenerationExperienceTests.swift */,
@@ -4825,6 +4828,7 @@
 				C9C6A0BCDA1AF56B81E21E90 /* ConsoleWholeDiskTests.swift in Sources */,
 				5C2093288994F432DB8B4804 /* DecideDelegateIntentRulesTests.swift in Sources */,
 				7A8A041B3D2EB92063AC4836 /* DeepLinkTests.swift in Sources */,
+				D35BC56A072C3888917691B1 /* DockMathTests.swift in Sources */,
 				4121CD4E66C00FEDC29BE409 /* EditHistoryTests.swift in Sources */,
 				E082B84ED85DE49C4C29F3A6 /* FilesPackageManifestTests.swift in Sources */,
 				62BCA63155FBEE453CC5AB7B /* FitVectorTests.swift in Sources */,
