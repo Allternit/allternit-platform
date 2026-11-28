@@ -193,6 +193,9 @@ struct DeepLinkHost: ViewModifier {
         case .inboxItem(let id):
             InboxStore.shared.focusedId = id
             isInboxPresented = true
+        case .kernelApproval(let runtimeId, let requestId):
+            InboxStore.shared.focusedKernel = KernelApproval.key(runtimeId: runtimeId, requestId: requestId)
+            isInboxPresented = true
         case .botChat(let id, let prompt):
             // Filled into the composer; the owner sends it.
             router.setComposerPrefill(prompt)

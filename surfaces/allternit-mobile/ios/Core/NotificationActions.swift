@@ -24,6 +24,10 @@ enum NotificationCategoryID {
     /// A site blocked the bot; Open shows the choices (continue / stop / re-run).
     static let aciBlocked = "ACI_BLOCKED"
 
+    /// An AllternitOS kernel approval. Open only: the exact action is read in
+    /// the app first, never approved from the lock screen.
+    static let kernelApproval = "KERNEL_APPROVAL"
+
     static let allACI: Set<String> = [aciApproval, aciHuman, aciBlocked]
 }
 
@@ -111,6 +115,8 @@ enum NotificationCategories {
                                              button(.stop, NotificationStrings.stop, [.destructive])],
                                    intentIdentifiers: []),
             UNNotificationCategory(identifier: NotificationCategoryID.aciBlocked,
+                                   actions: [open], intentIdentifiers: []),
+            UNNotificationCategory(identifier: NotificationCategoryID.kernelApproval,
                                    actions: [open], intentIdentifiers: []),
             UNNotificationCategory(identifier: NotificationCategoryID.needsFix,
                                    actions: [button(.retry, NotificationStrings.retry, auth),

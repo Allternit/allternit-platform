@@ -44,6 +44,10 @@ enum DeepLink: Equatable, Sendable {
     case inbox
     /// The inbox with one item in view (`/inbox/<id>`, a push's `data.inboxId`).
     case inboxItem(String)
+    /// One AllternitOS kernel approval, open in the inbox to read the exact
+    /// action (`allternit://inbox/kernel/<runtime_id>/<request_id>`, the
+    /// `KERNEL_APPROVAL` push). Never answered from the notification.
+    case kernelApproval(runtimeId: String, requestId: String)
     /// A bot's chat with `prompt` in the composer, never sent
     /// (`/bot/<id>/chat?prompt=`).
     case botChat(botId: String, prompt: String?)
@@ -176,6 +180,11 @@ enum DeepLink: Equatable, Sendable {
             guard segments.count >= 2, let id = segments[1].removingPercentEncoding, !id.isEmpty else { return nil }
             return .phoneRun(id)
         case "inbox":
+            if segments.count >= 4, segments[1] == "kernel",
+               let runtime = segments[2].removingPercentEncoding, !runtime.isEmpty,
+               let request = segments[3].removingPercentEncoding, !request.isEmpty {
+                return .kernelApproval(runtimeId: runtime, requestId: request)
+            }
             if segments.count >= 2, let id = segments[1].removingPercentEncoding, !id.isEmpty {
                 return .inboxItem(id)
             }

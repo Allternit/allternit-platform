@@ -89,6 +89,14 @@ final class NotificationActionsTests: XCTestCase {
         }
     }
 
+    func testKernelApprovalLinkAndCategory() {
+        XCTAssertEqual(DeepLink.parse(url: URL(string: "allternit://inbox/kernel/rt1/req%3A9")!),
+                       .kernelApproval(runtimeId: "rt1", requestId: "req:9"))
+        let category = NotificationCategories.all().first { $0.identifier == "KERNEL_APPROVAL" }
+        // Open only: never Approve or Deny from the lock screen.
+        XCTAssertEqual(category?.actions.map(\.identifier), ["OPEN"])
+    }
+
     func testDeepLinks() {
         XCTAssertEqual(DeepLink.parse(url: URL(string: "allternit://inbox/approval%3Aap1")!), .inboxItem("approval:ap1"))
         // Hand-off: the control's link, the path, and the web/Android shortcut all open the composer.
